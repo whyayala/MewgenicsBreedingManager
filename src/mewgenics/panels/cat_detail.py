@@ -35,7 +35,7 @@ from mewgenics.utils.config import _load_app_config, _save_app_config, _saved_st
 from mewgenics.utils.cat_analysis import _cat_base_sum, _pair_breakpoint_analysis
 from mewgenics.utils.calibration import _trait_label_from_value, _trait_level_color
 from mewgenics.utils.abilities import (
-    _mutation_display_name, _ability_tip, _ability_upgraded_tip, _strip_tier,
+    _mutation_display_name, _ability_display_name, _ability_tip, _ability_upgraded_tip, _strip_tier,
     _ability_effect_lines, _mutation_effect_lines,
     _mutation_effect_components,
     _trait_inheritance_probabilities,
@@ -578,7 +578,7 @@ class CatDetailPanel(QWidget):
             passive_tiers = getattr(cat, "passive_tiers", {})
             ab.addWidget(_sec("ABILITIES"))
             ability_items = [
-                (base if tier == 1 else f"{base}+",
+                (_ability_display_name(base) if tier == 1 else f"{_ability_display_name(base)}+",
                  _ability_upgraded_tip(name),
                  tier > 1)
                 for name in cat.abilities
@@ -927,7 +927,7 @@ class CatDetailPanel(QWidget):
                 ab_col.addWidget(QLabel(f"{cat.name}:", styleSheet="color:#555; font-size:10px;"))
                 _pt = getattr(cat, "passive_tiers", {})
                 ability_items = [
-                    (base if tier == 1 else f"{base}+",
+                    (_ability_display_name(base) if tier == 1 else f"{_ability_display_name(base)}+",
                      _ability_upgraded_tip(ab),
                      tier > 1)
                     for ab in cat.abilities

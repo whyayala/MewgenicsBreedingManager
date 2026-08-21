@@ -35,7 +35,7 @@ from mewgenics.utils.cat_analysis import (
 )
 from mewgenics.utils.calibration import _trait_label_from_value, _trait_level_color
 from mewgenics.utils.abilities import (
-    _mutation_display_name, _strip_tier, _abilities_tooltip, _mutations_tooltip,
+    _mutation_display_name, _ability_display_name, _strip_tier, _abilities_tooltip, _mutations_tooltip,
 )
 
 
@@ -951,7 +951,8 @@ class CatTableModel(QAbstractTableModel):
                 parts = []
                 for ab in cat.abilities:
                     base, tier = _strip_tier(ab)
-                    parts.append(f"{base}+" if tier > 1 else base)
+                    display = _ability_display_name(base)
+                    parts.append(f"{display}+" if tier > 1 else display)
                 for p in cat.passive_abilities:
                     tier = _pt.get(p, 1)
                     name = _mutation_display_name(p)
