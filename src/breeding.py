@@ -482,6 +482,7 @@ def evaluate_pair(
     parent_key_map: Optional[dict[int, set[int]]] = None,
     pair_eval_cache: Optional[dict] = None,
     compat_threshold: float = 0.05,
+    kinship_memo: Optional[dict] = None,
 ) -> tuple[bool, str, float, float]:
     """
     Unified pair evaluation. Returns (can_breed, reason, risk_pct, game_compat).
@@ -489,6 +490,9 @@ def evaluate_pair(
     game_compat is the game's compatibility score; pairs below compat_threshold
     are rejected early (before the expensive COI calculation).
     Pass parent_key_map to enable direct-family checking.
+    Pass kinship_memo (a dict reused across calls) to amortize the recursive
+    kinship walk across many pair evaluations — ancestries overlap heavily,
+    so a shared memo turns repeated deep-lineage walks into dict lookups.
     """
     if pair_eval_cache is not None:
         key = pair_key(a, b)
@@ -518,9 +522,9 @@ def evaluate_pair(
             if callable(get_risk):
                 risk = get_risk(a, b)
             else:
-                risk = risk_percent(a, b)
+                risk = risk_percent(a, b, kinship_memo)
         else:
-            risk = risk_percent(a, b)
+            risk = risk_percent(a, b, kinship_memo)
     else:
         risk = 0.0
 
@@ -548,6 +552,7 @@ def score_pair(
     stat_priority: Optional[Sequence[str]] = None,
     must_breed_bonus: float = 1000.0,
     lover_bonus: float = 500.0,
+    kinship_memo: Optional[dict] = None,
 ) -> PairFactors:
     """Return a complete score breakdown for a pair."""
     hater_key_map = hater_key_map or {}
@@ -563,6 +568,7 @@ def score_pair(
         cache=cache,
         parent_key_map=parent_key_map,
         pair_eval_cache=pair_eval_cache,
+        kinship_memo=kinship_memo,
     )
 
     projection = pair_projection(a, b, stimulation=stimulation)

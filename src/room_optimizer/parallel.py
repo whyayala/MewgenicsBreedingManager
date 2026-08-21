@@ -8,9 +8,10 @@ workers without needing to pickle Cat or BreedingCache objects.
 from __future__ import annotations
 
 import math
+import multiprocessing
 import os
 import random
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed, wait as _futures_wait
 from functools import lru_cache
 from typing import Optional
 
@@ -174,9 +175,22 @@ def _sa_chain(
     sa_cooling_rate: float,
     sa_neighbors_per_temp: int,
     seed: int,
+    cancel_event=None,
+    cancel_check=None,
 ) -> tuple[dict[int, str], float]:
-    """Run one SA chain and return (best_state, best_score)."""
+    """Run one SA chain and return (best_state, best_score).
+
+    *cancel_event* is an optional ``multiprocessing.Manager().Event()`` proxy
+    (picklable, so it works in ProcessPoolExecutor workers); *cancel_check* is
+    an optional callable for the in-process (n_chains=1) path. When either
+    signals, the chain returns its best-so-far result early.
+    """
     rng = random.Random(seed)
+
+    def _chain_cancelled() -> bool:
+        if cancel_event is not None and cancel_event.is_set():
+            return True
+        return bool(cancel_check and cancel_check())
     breeding_set = set(breeding_room_keys)
 
     mutable_ids = [cid for cid in initial_state if cid not in fixed_ids]
@@ -320,6 +334,10 @@ def _sa_chain(
         temperature = max(1.0, -avg_delta / math.log(0.8))
 
     while temperature > 0.1:
+        # Poll once per temperature step: cheap relative to the neighbor
+        # evaluations, and keeps Cancel responsive even mid-anneal.
+        if _chain_cancelled():
+            return best_state, best_score
         for _ in range(neighbor_count):
             nb = _neighbor(state)
             nb_score = _state_score(nb)
@@ -405,30 +423,40 @@ def run_parallel_sa(
         return dict(initial_state)
 
     if n_chains == 1:
-        best_state, _ = _sa_chain(**kwargs, seed=0)
+        best_state, _ = _sa_chain(**kwargs, seed=0, cancel_check=cancel_check)
         return best_state
 
     best_state: dict[int, str] = dict(initial_state)
     best_score = float("-inf")
 
-    with ProcessPoolExecutor(max_workers=n_chains) as pool:
-        futures = {
-            pool.submit(_sa_chain, **kwargs, seed=i): i
-            for i in range(n_chains)
-        }
-        for future in as_completed(futures):
-            if _cancelled():
-                for f in futures:
-                    f.cancel()
-                pool.shutdown(wait=False, cancel_futures=True)
-                break
-            try:
-                state, score = future.result()
-                if score > best_score:
-                    best_score = score
-                    best_state = state
-            except Exception:
-                pass
+    # A Manager Event proxy is picklable, so worker chains can poll it and
+    # exit early. (future.cancel() only stops chains that haven't started;
+    # without the event, cancelling used to block on the pool join until
+    # every running chain annealed to completion.)
+    manager = multiprocessing.Manager()
+    cancel_event = manager.Event()
+    try:
+        with ProcessPoolExecutor(max_workers=n_chains) as pool:
+            pending = {
+                pool.submit(_sa_chain, **kwargs, seed=i, cancel_event=cancel_event)
+                for i in range(n_chains)
+            }
+            while pending:
+                if not cancel_event.is_set() and _cancelled():
+                    # Signal chains to stop; keep collecting — each returns
+                    # its best-so-far state at the next temperature step.
+                    cancel_event.set()
+                done, pending = _futures_wait(pending, timeout=0.25)
+                for future in done:
+                    try:
+                        state, score = future.result()
+                        if score > best_score:
+                            best_score = score
+                            best_state = state
+                    except Exception:
+                        pass
+    finally:
+        manager.shutdown()
 
     return best_state
 

@@ -489,13 +489,18 @@ def _run_sa_refinement(
     """Refine room assignments with simulated annealing."""
     _cancelled = cancel_check or (lambda: False)
     all_cat_ids = list(cats_by_id.keys())
+    default_room = best_ey_room or _best_breeding_room(room_configs) or room_configs[0]
+    # Cancel is polled inside the inner loop: a single outer iteration scores
+    # (n - i) pairs against every room, which on large saves is far too long
+    # a gap to leave the Cancel button unresponsive.
+    _scored = 0
     for i in range(len(all_cat_ids)):
-        if i % 20 == 0 and _cancelled():
-            return room_assignments
         for j in range(i + 1, len(all_cat_ids)):
+            _scored += 1
+            if _scored % 200 == 0 and _cancelled():
+                return room_assignments
             a = cats_by_id[all_cat_ids[i]]
             b = cats_by_id[all_cat_ids[j]]
-            default_room = best_ey_room or _best_breeding_room(room_configs) or room_configs[0]
             score_pair_cached(a, b, default_room, params.stimulation)
             for room in room_configs:
                 score_pair_cached(a, b, room, room.base_stim)
@@ -622,6 +627,14 @@ def optimize_room_distribution(
     def _pair_factor_key(a: Cat, b: Cat, room: RoomConfig, stimulation: float) -> tuple[int, int, float, str]:
         return (min(a.db_key, b.db_key), max(a.db_key, b.db_key), float(stimulation), room.mode_key)
 
+    # Shared across every _score_pair_cached call for this optimization run:
+    # risk/compat depend only on the pair (not room or stimulation), and the
+    # kinship walk's memo is reusable across pairs because ancestries overlap.
+    # Without these, deep-lineage saves recompute the full kinship DAG once
+    # per (pair, room) combination, which is what made large runs hang.
+    shared_pair_eval_cache: dict = {}
+    shared_kinship_memo: dict = {}
+
     def _score_pair_cached(a: Cat, b: Cat, room: RoomConfig, stimulation: float) -> PairFactors:
         key = _pair_factor_key(a, b, room, stimulation)
         if key not in pair_factor_cache:
@@ -633,6 +646,8 @@ def optimize_room_distribution(
                 lover_key_map=lover_key_map,
                 avoid_lovers=params.avoid_lovers,
                 cache=cache,
+                pair_eval_cache=shared_pair_eval_cache,
+                kinship_memo=shared_kinship_memo,
                 stimulation=stimulation,
                 minimize_variance=params.minimize_variance,
                 prefer_low_aggression=params.prefer_low_aggression,
@@ -831,7 +846,9 @@ def optimize_room_distribution(
 
         lover_locked: set[int] = has_mutual_lover if params.avoid_lovers else set()
         pairs_with_scores: list[dict] = []
-        for cat_a, cat_b in candidate_pairs:
+        for pair_idx, (cat_a, cat_b) in enumerate(candidate_pairs):
+            if pair_idx % 200 == 0 and _cancelled():
+                break
             if params.avoid_lovers and (cat_a.db_key in lover_locked or cat_b.db_key in lover_locked):
                 if not is_mutual_lover_pair(cat_a, cat_b, lover_key_map):
                     continue
