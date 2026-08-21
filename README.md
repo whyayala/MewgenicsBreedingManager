@@ -1,18 +1,12 @@
 # Mewgenics Breeding Manager
 
-> ## ⚠️ Project status: archived, not maintained
->
-> This repo is archived and I am no longer accepting issues or pull requests. The latest release (`v5.8.4`) is in a working state against the version of Mewgenics at the time of archiving, and the Windows build in the [Releases](../../releases) page should run out of the box.
->
-> **Anyone is free to fork it and keep it going.** The build is straightforward (`pip install -r requirements.txt && python src/mewgenics_manager.py`, or `build.bat` for a standalone Windows exe), and the architecture is documented in [`CLAUDE.md`](CLAUDE.md). If Mewgenics updates break the save parser, the binary offsets live in `src/save_parser.py` and `tools/field_mapper/` has the reverse-engineering pipeline used to find them.
->
-> If you fork and ship a maintained successor, feel free to open a PR against this README linking to your fork and I'll merge it before archiving is finalized.
+> This is a maintained fork of [frankieg33/MewgenicsBreedingManager](https://github.com/frankieg33/MewgenicsBreedingManager), which was archived at `v5.8.4`. This fork picks up from there, updated for the Mewgenics 1.1 balance overhaul and beyond.
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.8.4`
+Current release: `v5.9.0`
 
-If you'd like to support the project, you can [here](https://ko-fi.com/frankieg33).
+If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
 ## Screenshots
 
@@ -70,7 +64,7 @@ Two views for evaluating which cats to keep, breed, or cull:
 ## Install
 
 ```bash
-git clone https://github.com/frankieg33/MewgenicsBreedingManager
+git clone https://github.com/whyayala/MewgenicsBreedingManager
 cd MewgenicsBreedingManager
 pip install -r requirements.txt
 python src/mewgenics_manager.py
@@ -110,9 +104,19 @@ Produces a standalone executable via PyInstaller.
 
 ## Release Notes
 
+### v5.9.0
+
+**First release of the maintained fork — updated for Mewgenics 1.1.** The 1.1 balance overhaul (May 2026) reworked classes, breeding, and mutations; this release brings the app back in line with the live game. Verified field-by-field against a current 1.1 save.
+
+- **Class stat modifiers now applied to total stats**: the game applies class mods (e.g. Thief `SPD +4, LCK +1, STR −1, CON −1`) on top of the save's stat arrays. The parser loaded them but never folded them into totals, so every classed cat's stats were wrong in the main table and detail panel (445 of 1,992 cats in the test save). Scoring paths that compensated separately no longer double-count.
+- **Ability names match the game again**: the 1.1 class rework renamed many abilities while save files kept the old internal tokens (`BearHug` → "Grab", `AnimateDead` → "Eternal Servitude" — 168 of 1,018 tokens in a current save). Display names are now resolved from the GPAK's GON `name` keys, following `variant_of` chains, with a clean fallback when no game data is available.
+- **Room Optimizer: major speedup + working Cancel**: pair risk is now computed once per pair (not once per pair × room) with a shared kinship memo — 40.4s → 4.7s on the 4,000-cat fixture, with bigger gains on deep lineages. Cancel is polled inside the hot loops and the simulated-annealing worker processes now stop on request (previously Cancel could hang for the full solve).
+- **New dev tooling**: `tools/diagnose_cat.py` (per-cat stat/mutation/ability diagnostics against a save + gpak) and `tools/extract_gpak_subset.py` (extracts only the entries the app reads from `resources.gpak` into a small drop-in file). `docs/game-updates-since-archive.md` maps the 1.1 patch notes to code impact.
+- **Regression tests** covering the class-mod fold, ability-name resolution, and optimizer cancellation, plus a 1.1-era fixture save in `tools/saves/saves.zip`.
+
 ### v5.8.4
 
-**Final maintained release.** The project is being archived; see the notice at the top of this file. The app is in a working state and anyone is welcome to fork it.
+**Final upstream release.** The original project was archived at this version; this fork continues from here (see the note at the top of this file).
 
 - **Mating Pair Search — filter + indicator fixes** (#102, #103): "Hide in-love" now treats *any* lover (not just mutual) as disqualifying, with separate toggles for the left list and the matches table. Cats with a lover now show a ♥ next to their name in both panels, and the list entries now include age.
 - **Donation/Exceptional thresholds driven by Detailed Scoring** (#104): new "Score source" combo in the Thresholds dialog — keep the default Base stat sum, or switch to the Detailed Scoring total with float thresholds. The sidebar counts and tooltips adapt to the active source. Falls back to base-sum silently when the Detailed cache hasn't been populated yet.
