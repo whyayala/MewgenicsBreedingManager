@@ -815,13 +815,11 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Final maintained release. This project is being archived — the repo will be read-only shortly and no further issues or PRs will be accepted. The app is in a working state; anyone is welcome to fork and continue from here. See the README for build instructions.",
-            "Mating Pair Search: 'Hide in-love' filters now treat any lover (not just mutual) as disqualifying. Cats with any lover show a ♥ next to their name in both the left list and the matches table, and the list now shows age for quick context (#102, #103).",
-            "Donation/Exceptional thresholds can now be driven by Detailed Scoring — new 'Score source' combo in the Thresholds dialog swaps base-sum thresholds for Detailed Scoring floats (#104).",
-            "CSV/XLSX export: added Class, Passive Abilities, Disorders, Defects, Tags, Lovers, and Haters columns.",
-            "Getting Started guide: new 9-page walkthrough with a startup prompt (Open Guide / Skip Once / Always Skip), accessible from Help > Getting Started.",
-            "Startup: splash screen now waits for the save to finish loading before the Getting Started prompt or What's New dialog appears, so the splash doesn't stay parked behind modal windows.",
-            "Breeding math: can_breed and the new game_compatibility helper now cite the wiki's formula directly (0.15 × CHA × libido × lover_mult × sexuality_mult with the > 0.05 gate) and used for compat-aware scoring.",
+            "This project is back under active maintenance! This fork of the archived original is updated for the Mewgenics 1.1 balance overhaul, verified field-by-field against a current save.",
+            "Class stat modifiers are now applied to total stats. The game adds class mods (e.g. Thief SPD +4, LCK +1, STR −1, CON −1) on top of the save's stat arrays — previously every classed cat's totals were wrong in the cat table and detail panel.",
+            "Ability names match the game again. The 1.1 class rework renamed many abilities while saves kept the old internal tokens (BearHug → Grab, AnimateDead → Eternal Servitude). Names are now resolved from the game's own data files.",
+            "Room Optimizer is dramatically faster on large colonies (~8× on a 4,000-cat save, more with deep lineages), and the Cancel button now actually stops the solver instead of hanging.",
+            "New dev tools: tools/diagnose_cat.py (compare a cat's parsed stats/abilities against the game) and tools/extract_gpak_subset.py (extract just the game data the app reads from resources.gpak).",
         ]
 
         root = QVBoxLayout(self)
