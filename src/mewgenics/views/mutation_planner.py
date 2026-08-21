@@ -16,8 +16,8 @@ from PySide6.QtGui import QColor
 
 from save_parser import (
     Cat, STAT_NAMES, can_breed, risk_percent, kinship_coi,
-    _stimulation_inheritance_weight, _inheritance_candidates,
-    _malady_breakdown,
+    _stimulation_inheritance_weight, _defect_inheritance_weight,
+    _inheritance_candidates, _malady_breakdown,
 )
 
 from mewgenics.utils.localization import _tr, ROOM_DISPLAY
@@ -1977,6 +1977,19 @@ class MutationDisorderPlannerView(QWidget):
             layout.addWidget(self._info_label(
                 _tr("mutation_planner.single_trait.mutation_help", favor=f"{favor_weight*100:.1f}", stim=stim)
             ))
+        elif category == "defect":
+            favor_weight = _stimulation_inheritance_weight(stim)
+            layout.addWidget(self._info_label(
+                _tr(
+                    "mutation_planner.single_trait.defect_help",
+                    default=("Birth defects inherit like visual mutations ({favor}% from the defective "
+                             "parent at {stim} stimulation), but since game 1.1 the roll uses "
+                             "effective stimulation = stim − 2 × the kitten's inbreeding %. "
+                             "Inbred pairs pass defects on much more often."),
+                    favor=f"{favor_weight*100:.1f}",
+                    stim=stim,
+                )
+            ))
         elif category == "passive":
             passive_chance = 0.05 + 0.01 * stim
             layout.addWidget(self._info_label(
@@ -2326,6 +2339,20 @@ class MutationDisorderPlannerView(QWidget):
         layout.addWidget(self._info_label(
             _tr("mutation_planner.pair.visual_summary", stim=stim, favor=f"{favor_weight*100:.1f}")
         ))
+        # Since 1.1, birth defects roll with effective stim = stim - 2 x inbreeding%,
+        # so defect rows use a separate (worse) inheritance weight for inbred pairs.
+        defect_weight = _defect_inheritance_weight(stim, coi)
+        if coi > 0.0:
+            layout.addWidget(self._info_label(
+                _tr(
+                    "mutation_planner.pair.defect_stim_note",
+                    default=("Birth defects: inbreeding ({coi}%) reduces effective stimulation to "
+                             "{eff} for defect inheritance rolls — defect rows below use {chance}%."),
+                    coi=f"{coi*100:.0f}",
+                    eff=f"{stim - 2.0 * coi * 100.0:.0f}",
+                    chance=f"{defect_weight*100:.0f}",
+                )
+            ))
 
         # Group mutations by group_key
         a_by_group: dict[str, list[dict]] = {}
@@ -2379,9 +2406,11 @@ class MutationDisorderPlannerView(QWidget):
                     else:
                         odds_text = _tr("mutation_planner.pair.odds.split", a=cat_a.name, b=cat_b.name)
                 elif a_has_mutation:
-                    odds_text = _tr("mutation_planner.pair.odds.mutated", name=cat_a.name, chance=f"{favor_weight*100:.0f}")
+                    w = defect_weight if all(e.get("is_defect") for e in a_entries) else favor_weight
+                    odds_text = _tr("mutation_planner.pair.odds.mutated", name=cat_a.name, chance=f"{w*100:.0f}")
                 elif b_has_mutation:
-                    odds_text = _tr("mutation_planner.pair.odds.mutated", name=cat_b.name, chance=f"{favor_weight*100:.0f}")
+                    w = defect_weight if all(e.get("is_defect") for e in b_entries) else favor_weight
+                    odds_text = _tr("mutation_planner.pair.odds.mutated", name=cat_b.name, chance=f"{w*100:.0f}")
                 else:
                     odds_text = _tr("mutation_planner.pair.odds.none")
 

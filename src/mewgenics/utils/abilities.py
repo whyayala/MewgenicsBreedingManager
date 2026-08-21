@@ -837,6 +837,12 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
                 text = re.sub(r'\[c:[^\]]*\]|\[/c\]', '', text)
                 return re.sub(r'\s+', ' ', text).strip()
 
+            def _is_unresolved_key(text: str) -> bool:
+                # A desc/name that still looks like a raw string key
+                # (PASSIVE_LUCKY_DESC) means the text tables have no entry —
+                # never surface it in the UI; fall back to hardcoded lookups.
+                return bool(re.fullmatch(r'[A-Z0-9_]+', text or ''))
+
             result: dict[str, str] = {}
             for fname, (foff, fsz) in file_offsets.items():
                 if not (
@@ -871,7 +877,7 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
                         desc_val = dm.group(1)
                         desc_val = game_strings.get(desc_val, desc_val)
                         desc_val = _resolve_game_string(desc_val, game_strings)
-                        if desc_val and desc_val != "nothing":
+                        if desc_val and desc_val != "nothing" and not _is_unresolved_key(desc_val):
                             result[base_key] = _clean(desc_val)
 
                     # Passive GON files use nested tier blocks: 2 { desc "..." }
@@ -895,7 +901,7 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
                                 t2_desc = t2dm.group(1)
                                 t2_desc = game_strings.get(t2_desc, t2_desc)
                                 t2_desc = _resolve_game_string(t2_desc, game_strings)
-                                if t2_desc and t2_desc != "nothing":
+                                if t2_desc and t2_desc != "nothing" and not _is_unresolved_key(t2_desc):
                                     result[tier2_key] = _clean(t2_desc)
 
             # Resolve display names: follow variant_of chains until a block
@@ -911,7 +917,9 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
                     name_key, variant_of = name_info[key]
                     if name_key:
                         raw = game_strings.get(name_key, name_key)
-                        display = _clean(_resolve_game_string(raw, game_strings))
+                        resolved = _resolve_game_string(raw, game_strings)
+                        if not _is_unresolved_key(resolved):
+                            display = _clean(resolved)
                         break
                     if not variant_of:
                         break

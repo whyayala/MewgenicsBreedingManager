@@ -37,26 +37,25 @@ Research date: 2026-08-21. Sources: [Mewgenics Wiki Version History](https://mew
 
 1. **Birth-defect inheritance now depends on stimulation AND inbreeding** (the headline change).
    Per wiki: for the defect-vs-ordinary-part roll, the stimulation weight uses `Stim − 2 × Inbreed%`
-   in place of `Stim`: roughly `(50 + 50×(Stim − 2×Inbreed%)) / (200 + |Stim − 2×Inbreed%|)`.
-   Stimulation must offset *double* the inbreeding percentage to suppress inheriting a parent's defect.
-   - Code impact: `save_parser.py::_stimulation_inheritance_weight` (line ~1331) and
-     `_inheritance_candidates` treat defects identically to positive mutations. Needs a
-     defect-specific weight taking `(stim, coi)`.
-   - Downstream: `breeding.py::pair_projection`, mutation planner, room optimizer scoring
-     (stimulation is now *more* valuable for inbred pairs' defect suppression, but see #2).
+   in place of `Stim`. Stimulation must offset *double* the inbreeding percentage to suppress
+   inheriting a parent's defect.
+   - ✅ DONE: `save_parser.py::_defect_inheritance_weight(stim, coi)`; used by the mutation
+     planner's pair outcome table (defect rows) with an explanatory note, plus a defect
+     help blurb in the single-trait view.
 
 2. **Negative stimulation fix**: probabilities no longer flip past 100% below −200 Stim.
-   Our `_stimulation_inheritance_weight` has no `abs()` in the denominator — same latent bug;
-   add `2.0 + 0.01 × abs(stim)`.
+   - ✅ DONE: `_stimulation_inheritance_weight` now uses `abs()` in the denominator and
+     clamps to [0, 1].
 
 3. **Mutation stat behavior rework**:
    - No longer rerolls existing mutations or birth defects.
-   - Rolls only simple (+2/−1 stat) mutations until Mutation stat > 10; beyond 10 raises the
-     chance of effect mutations.
-   - Code impact: mutation planner (`views/mutation_planner.py`), any projection of *new*
-     mutation odds.
+   - Rolls only simple (+2/−1 stat) mutations until Mutation stat > 10.
+   - ✅ DONE (reroll half): the room optimizer's avoid-trait-loss penalty no longer
+     steers mutation carriers away from high-Evolution rooms (only the Health/disorder
+     half remains); tooltips updated. The app does not model *new*-mutation rolls, so
+     the simple-until-10 rule has no further code impact.
 
-4. **Voice inheritance**: 98% → 75% (only if we model it anywhere — likely N/A).
+4. **Voice inheritance**: 98% → 75% — not modeled anywhere; N/A.
 
 5. **"Missing" defect counting**: heads with 1 eye/eyebrow/ear (Cyclops etc.) no longer count as
    an additional "Missing" defect for the absent counterpart. Check defect counting in

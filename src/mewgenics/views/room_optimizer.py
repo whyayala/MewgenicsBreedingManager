@@ -729,16 +729,16 @@ class RoomOptimizerView(QWidget):
         self._send_kittens_checkbox.toggled.connect(lambda _: self._save_session_state())
         self._setup_controls_layout.addWidget(self._send_kittens_checkbox)
 
-        # Avoid placing cats carrying desired mutations into high-Evolution
-        # rooms, and cats carrying desired disorders into high-Health rooms —
-        # those room effects can strip the desired traits away.
+        # Avoid placing cats carrying desired disorders into high-Health rooms
+        # (the Health effect can cure them away). High-Mutation rooms stopped
+        # rerolling existing mutations in game 1.1, so mutations are safe.
         self._avoid_trait_loss_checkbox = QPushButton()
         self._avoid_trait_loss_checkbox.setCheckable(True)
         self._avoid_trait_loss_checkbox.setChecked(_saved_optimizer_flag("avoid_trait_loss", False))
         self._avoid_trait_loss_checkbox.setToolTip(
             _tr(
                 "room_optimizer.tooltip.avoid_trait_loss",
-                default="Avoid placing cats with desired mutations into high-Evolution rooms, and cats with desired disorders into high-Health rooms (those effects can strip the traits).",
+                default="Avoid placing cats with desired disorders into high-Health rooms (the Health effect can cure them away). Since game 1.1, high-Mutation rooms no longer reroll existing mutations, so mutations are safe.",
             )
         )
         self._avoid_trait_loss_checkbox.setStyleSheet(
@@ -1512,7 +1512,7 @@ class RoomOptimizerView(QWidget):
             self._avoid_trait_loss_checkbox.setToolTip(
                 _tr(
                     "room_optimizer.tooltip.avoid_trait_loss",
-                    default="Avoid placing cats with desired mutations into high-Evolution rooms, and cats with desired disorders into high-Health rooms (those effects can strip the traits).",
+                    default="Avoid placing cats with desired disorders into high-Health rooms (the Health effect can cure them away). Since game 1.1, high-Mutation rooms no longer reroll existing mutations, so mutations are safe.",
                 )
             )
         if hasattr(self, "_shared_search_note"):

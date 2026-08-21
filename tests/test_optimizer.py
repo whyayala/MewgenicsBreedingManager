@@ -584,26 +584,31 @@ def test_send_kittens_to_fallback_works_in_family_mode():
 
 # ── Issue 71: Trait-loss avoidance (Evolution/Health room awareness) ──────
 
-def test_avoid_trait_loss_steers_desired_mutation_away_from_evolution_room():
-    """A cat with a desired mutation should prefer a low-Evolution room
-    when avoid_trait_loss is enabled."""
-    cat_a = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5, mutations=["extra_whiskers"])
+def test_avoid_trait_loss_steers_desired_disorder_away_from_health_room():
+    """A cat with a desired disorder should prefer a low-Health room when
+    avoid_trait_loss is enabled (high Health can cure the disorder away).
+
+    Since game 1.1 the Mutation stat no longer rerolls existing traits, so
+    high-Evolution rooms are safe for mutations — only the disorder/Health
+    half of the penalty remains (see the test below for the mutation case).
+    """
+    cat_a = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5, disorders=["sociopathy"])
     cat_b = _make_cat(2, gender="female", sexuality="bi", stat_seed=7, age=5)
 
-    high_evo = RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 6, 50.0, evolution=80.0)
-    low_evo = RoomConfig("Floor1_Small", RoomType.BEST_PAIRS, 6, 50.0, evolution=0.0)
+    high_health = RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 6, 50.0, health=80.0)
+    low_health = RoomConfig("Floor1_Small", RoomType.BEST_PAIRS, 6, 50.0, health=0.0)
     fallback = RoomConfig("Attic", RoomType.FALLBACK, None, 50.0)
 
     profiles = {
         "best_pairs": {
-            "traits": [{"category": "mutation", "key": "extra_whiskers", "weight": 10, "display": "Extra Whiskers"}],
+            "traits": [{"category": "disorder", "key": "sociopathy", "weight": 10, "display": "Sociopathy"}],
             "stat_priority": list(STAT_NAMES),
         },
     }
 
     result = optimize_room_distribution(
         [cat_a, cat_b],
-        [high_evo, low_evo, fallback],
+        [high_health, low_health, fallback],
         OptimizationParams(
             max_risk=10.0,
             avoid_lovers=False,
@@ -614,10 +619,20 @@ def test_avoid_trait_loss_steers_desired_mutation_away_from_evolution_room():
         excluded_keys=set(),
     )
 
-    # Both cats should land in the low-evolution room; the penalty on the
-    # high-evolution room should push the greedy search to pick the other.
+    # Both cats should land in the low-health room; the penalty on the
+    # high-health room should push the greedy search to pick the other.
     assert _room_for_cat(result, 1) == "Floor1_Small"
     assert _room_for_cat(result, 2) == "Floor1_Small"
+
+
+def test_high_evolution_room_no_longer_penalizes_desired_mutations():
+    """Since game 1.1 the Mutation stat never rerolls existing mutations or
+    birth defects, so a desired mutation carries no penalty in a
+    high-Evolution room."""
+    cat = _make_cat(1, gender="male", sexuality="bi", age=5, mutations=["extra_whiskers"])
+    high_evo = RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 6, 50.0, evolution=80.0)
+    desired = [{"category": "mutation", "key": "extra_whiskers", "weight": 10}]
+    assert room_optimizer_impl._trait_loss_penalty(cat, high_evo, desired) == 0.0
 
 
 def test_avoid_trait_loss_disabled_permits_high_evolution_placement():
@@ -702,25 +717,26 @@ def test_build_room_configs_extracts_evolution_and_health():
     assert configs[0].health == 17.5
 
 
-def test_trait_loss_penalty_matches_mutation_with_id_suffix():
-    """Mutation planner stores trait keys as ``"<name>|<mutation_id>"`` but
-    `cat.mutations` only carries the display name. The penalty must compare by
-    the name portion on both sides so a desired mutation from the planner
-    actually triggers the penalty."""
-    cat = _make_cat(1, gender="male", sexuality="bi", age=5, mutations=["FluffyTail"])
-    high_evo = RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 6, 50.0, evolution=80.0)
+def test_trait_loss_penalty_matches_disorder_with_id_suffix():
+    """Mutation planner stores trait keys as ``"<name>|<id>"`` but
+    `cat.disorders` only carries the display name. The penalty must compare by
+    the name portion on both sides so a desired disorder from the planner
+    actually triggers the penalty. (Mutations no longer participate — since
+    game 1.1 high-Evolution rooms don't reroll existing traits.)"""
+    cat = _make_cat(1, gender="male", sexuality="bi", age=5, disorders=["Sociopathy"])
+    high_health = RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 6, 50.0, health=80.0)
 
-    # Trait stored with the mutation chip ID suffix (real planner format).
-    desired = [{"category": "mutation", "key": "FluffyTail|42", "weight": 10}]
-    penalty = room_optimizer_impl._trait_loss_penalty(cat, high_evo, desired)
+    # Trait stored with the chip ID suffix (real planner format).
+    desired = [{"category": "disorder", "key": "Sociopathy|42", "weight": 10}]
+    penalty = room_optimizer_impl._trait_loss_penalty(cat, high_health, desired)
     assert penalty > 0.0
 
     # Reverse case: cat carries the suffixed form, planner uses the bare name.
-    cat_suffixed = _make_cat(2, gender="male", sexuality="bi", age=5, mutations=["FluffyTail|42"])
-    desired_bare = [{"category": "mutation", "key": "FluffyTail", "weight": 10}]
-    penalty_reverse = room_optimizer_impl._trait_loss_penalty(cat_suffixed, high_evo, desired_bare)
+    cat_suffixed = _make_cat(2, gender="male", sexuality="bi", age=5, disorders=["Sociopathy|42"])
+    desired_bare = [{"category": "disorder", "key": "Sociopathy", "weight": 10}]
+    penalty_reverse = room_optimizer_impl._trait_loss_penalty(cat_suffixed, high_health, desired_bare)
     assert penalty_reverse > 0.0
 
     # Sanity: mismatched name still produces no penalty.
-    desired_other = [{"category": "mutation", "key": "ExtraEars|7", "weight": 10}]
-    assert room_optimizer_impl._trait_loss_penalty(cat, high_evo, desired_other) == 0.0
+    desired_other = [{"category": "disorder", "key": "Hypersomnia|7", "weight": 10}]
+    assert room_optimizer_impl._trait_loss_penalty(cat, high_health, desired_other) == 0.0
