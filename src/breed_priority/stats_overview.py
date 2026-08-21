@@ -59,7 +59,7 @@ def _stat_idx(sn: str) -> int:
 def _effects_for(cat, stat_names: list) -> list:
     """Return [(stat_key, total_delta, mod_part, sec_part, class_part), ...] for all non-zero deltas.
 
-    total_delta = total_stats + class_mods - base_stats (positive = buff, negative = debuff/injury).
+    total_delta = total_stats - base_stats (positive = buff, negative = debuff/injury).
     mod_part / sec_part / class_part are the underlying components when available.
     """
     base  = getattr(cat, 'base_stats',  None)
@@ -76,7 +76,9 @@ def _effects_for(cat, stat_names: list) -> list:
         b = base.get(sn, 0)
         t = total.get(sn, b)
         cls_mod = class_mods.get(sn, 0)
-        delta = (t - b) + cls_mod
+        # total_stats already includes class mods (folded in at parse time);
+        # cls_mod is kept only as a breakdown component.
+        delta = t - b
         if delta == 0:
             continue
         idx = _stat_idx(sn)

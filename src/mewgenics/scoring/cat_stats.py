@@ -41,9 +41,9 @@ def get_class_stat_bonuses(cat) -> dict[str, int]:
 def get_cat_stats(cat, use_current: bool, add_mutation_stats: bool = False) -> dict[str, int]:
     """Return the stat dict to use for scoring.
 
-    use_current=True  -> total_stats (base + modifiers/injuries), plus class
-                         stat modifiers always applied on top (the game shows
-                         these in the house management screen).
+    use_current=True  -> total_stats (base + modifiers/injuries + mutation and
+                         class stat bonuses, matching the in-game sheet —
+                         class mods are folded in at parse time)
     use_current=False -> base_stats (genetic base only, no class mods)
     add_mutation_stats -> parse visual-mutation detail fields and add on top.
     """
@@ -53,9 +53,6 @@ def get_cat_stats(cat, use_current: bool, add_mutation_stats: bool = False) -> d
         source = getattr(cat, 'base_stats', {}) or {}
 
     all_bonuses: dict[str, int] = {}
-    if use_current:
-        for stat, delta in get_class_stat_bonuses(cat).items():
-            all_bonuses[stat] = all_bonuses.get(stat, 0) + delta
     if add_mutation_stats:
         for stat, delta in get_mutation_stat_bonuses(cat).items():
             all_bonuses[stat] = all_bonuses.get(stat, 0) + delta
