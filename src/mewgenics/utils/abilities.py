@@ -330,6 +330,12 @@ _ABILITY_KEY_ALIASES: dict[str, str] = {
 # Populated at runtime by _load_ability_descriptions()
 _ABILITY_DESC: dict[str, str] = {}
 
+# {stripped_token: localized display name}, rebuilt by _load_ability_descriptions.
+# Save files store internal tokens (BearHug, AnimateDead); since the 1.1 class
+# rework many in-game display names diverge from the token (Grab, Eternal
+# Servitude), so display must go through this map when the GPAK is loaded.
+_ABILITY_NAMES: dict[str, str] = {}
+
 
 def _strip_tier(name: str) -> tuple[str, int]:
     """Return (base_name, tier). 'TankSwap2' -> ('TankSwap', 2), 'TankSwap' -> ('TankSwap', 1)."""
@@ -338,11 +344,32 @@ def _strip_tier(name: str) -> tuple[str, int]:
     return name, 1
 
 
+def _ability_display_name(name: str) -> str:
+    """Return the in-game display name for an ability/passive token.
+
+    Looks up the GPAK-derived name map (full token first, then the
+    tier-stripped base so 'TankSwap2' resolves via 'TankSwap'); falls back to
+    camel-case spacing of the raw token when the GPAK is not loaded.
+    """
+    key = re.sub(r'[^a-z0-9]', '', name.lower())
+    display = _ABILITY_NAMES.get(key)
+    if display:
+        return display
+    base, _tier = _strip_tier(name)
+    base_key = re.sub(r'[^a-z0-9]', '', base.lower())
+    display = _ABILITY_NAMES.get(base_key)
+    if display:
+        return display
+    return _mutation_display_name(base)
+
+
 def _mutation_display_name(name: str) -> str:
     """Return a human-readable display name for a mutation/ability identifier."""
     key = re.sub(r'[^a-z0-9]', '', name.lower())
     if key in _MUTATION_DISPLAY_NAMES:
         return _MUTATION_DISPLAY_NAMES[key]
+    if key in _ABILITY_NAMES:
+        return _ABILITY_NAMES[key]
     spaced = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', name)
     spaced = re.sub(r'(?<=[A-Z])(?=[A-Z][a-z])', ' ', spaced)
     if spaced == spaced.lower():
@@ -488,7 +515,8 @@ def _abilities_tooltip(cat: "Cat") -> str:
     lines: list[str] = []
     for ability in cat.abilities:
         base, tier = _strip_tier(ability)
-        label = f"{base}+" if tier > 1 else base
+        display = _ability_display_name(base)
+        label = f"{display}+" if tier > 1 else display
         tip = _ability_upgraded_tip(ability)
         lines.append(label if not tip else f"{label}\n{tip}")
     for passive in cat.passive_abilities:
@@ -763,6 +791,14 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
     """
     Build {normalized_ability_id: english_desc} by reading ability/passive GON files
     and combined.csv from the game's gpak. Returns {} if gpak is unavailable.
+
+    Side effect: also rebuilds _ABILITY_NAMES from the same GON pass — each
+    block's ``name "STRING_KEY"`` field resolved through the text tables, with
+    ``variant_of`` chains followed so variants (BasicStraightShot_Thief,
+    Pierce2, ...) inherit their base ability's display name. Save files store
+    internal tokens; since the 1.1 class rework many display names diverge
+    from their token (BearHug -> "Grab"), so tokens can no longer be shown
+    verbatim.
     """
     if not gpak_path:
         return {}
@@ -787,7 +823,13 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
 
             block_re = re.compile(r'^([A-Za-z]\w*)\s*\{', re.MULTILINE)
             desc_re = re.compile(r'^\s*desc\s+"([^"]*)"', re.MULTILINE)
+            name_re = re.compile(r'^\s*name\s+"([^"]*)"', re.MULTILINE)
+            variant_re = re.compile(r'^\s*variant_of\s+(\w+)', re.MULTILINE)
             tier2_block_re = re.compile(r'^\s*2\s*\{', re.MULTILINE)
+
+            # token -> (name string key or None, variant_of token or None),
+            # keyed by lowercased GON block id.
+            name_info: dict[str, tuple[str | None, str | None]] = {}
 
             def _clean(text: str) -> str:
                 text = re.sub(r'\[img:[^\]]+\]', '', text)
@@ -816,6 +858,13 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
                         idx += 1
                     block = content[block_start:idx - 1]
                     base_key = ability_id.lower()
+
+                    nm = name_re.search(block)
+                    vm = variant_re.search(block)
+                    name_info[base_key] = (
+                        nm.group(1) if nm else None,
+                        vm.group(1).lower() if vm else None,
+                    )
 
                     dm = desc_re.search(block)
                     if dm:
@@ -848,6 +897,29 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
                                 t2_desc = _resolve_game_string(t2_desc, game_strings)
                                 if t2_desc and t2_desc != "nothing":
                                     result[tier2_key] = _clean(t2_desc)
+
+            # Resolve display names: follow variant_of chains until a block
+            # with a name key is found, then look the key up in the text
+            # tables. Store under _ability_tip's stripped normalization so
+            # underscore tokens (BasicStraightShot_Thief) resolve too.
+            names: dict[str, str] = {}
+            for token in name_info:
+                key, seen = token, set()
+                display = None
+                while key in name_info and key not in seen:
+                    seen.add(key)
+                    name_key, variant_of = name_info[key]
+                    if name_key:
+                        raw = game_strings.get(name_key, name_key)
+                        display = _clean(_resolve_game_string(raw, game_strings))
+                        break
+                    if not variant_of:
+                        break
+                    key = variant_of
+                if display:
+                    names[re.sub(r'[^a-z0-9]', '', token)] = display
+            _ABILITY_NAMES.clear()
+            _ABILITY_NAMES.update(names)
         return result
     except Exception:
         return {}

@@ -46,6 +46,7 @@ desktop.ini
 # screenshot.png intentionally tracked for README
 
 resources.gpak
+*.gpak
 icons.zip
 tools/icons.zip
 

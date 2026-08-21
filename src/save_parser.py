@@ -1879,6 +1879,13 @@ class Cat:
                     if class_name != "Colorless":
                         self.cat_class = class_name
                         self.class_stat_mods = _CLASS_STAT_MODS.get(class_name, {})
+                        # The character sheet applies class stat modifiers on
+                        # top of base/mod/sec (they are not stored in any of
+                        # the save's stat arrays), so fold them into
+                        # total_stats like the mutation bonuses above.
+                        for _stat, _delta in self.class_stat_mods.items():
+                            if _stat in self.total_stats:
+                                self.total_stats[_stat] += _delta
                     break
         except Exception:
             logger.debug("Cat %s: class extraction failed", cat_key, exc_info=True)
