@@ -1329,8 +1329,29 @@ def _appearance_preview_text(a_names: list[str], b_names: list[str]) -> str:
 
 
 def _stimulation_inheritance_weight(stimulation: float) -> float:
+    """Chance the kitten takes the favored side of a part/stat inheritance roll.
+
+    Game formula: (100 + stim) / (200 + |stim|), i.e. 50/50 at 0 stimulation,
+    approaching 100% as stimulation grows. The |stim| in the denominator and
+    the clamp mirror the game's 1.1.21016 fix for negative stimulation below
+    -200 flipping probabilities past 100%.
+    """
     stim = float(stimulation)
-    return (1.0 + 0.01 * stim) / (2.0 + 0.01 * stim)
+    weight = (1.0 + 0.01 * stim) / (2.0 + 0.01 * abs(stim))
+    return max(0.0, min(1.0, weight))
+
+
+def _defect_inheritance_weight(stimulation: float, coi: float) -> float:
+    """Chance the kitten inherits a parent's BIRTH DEFECT part (vs a normal one).
+
+    Since 1.1, birth defects roll with an effective stimulation of
+    ``stim - 2 x inbreeding%`` — stimulation must offset double the kitten's
+    inbreeding percentage to suppress defect inheritance, so inbred kittens
+    are significantly more likely to inherit parental defects. *coi* is the
+    kinship coefficient in [0, 1] (see kinship_coi).
+    """
+    effective = float(stimulation) - 2.0 * max(0.0, float(coi)) * 100.0
+    return _stimulation_inheritance_weight(effective)
 
 
 def _inheritance_candidates(

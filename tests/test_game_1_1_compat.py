@@ -220,3 +220,102 @@ class TestOptimizerCancellation:
         )
         assert isinstance(result, dict)
         assert set(result) == set(initial)
+
+
+class TestInheritanceWeights:
+    """1.1 breeding-model changes: negative-stim guard + defect-specific weight."""
+
+    def test_weight_baseline_and_monotonic(self):
+        from save_parser import _stimulation_inheritance_weight as w
+        assert w(0) == 0.5
+        assert w(50) == pytest.approx(1.5 / 2.5)
+        assert w(50) > w(0) > w(-50)
+
+    def test_negative_stim_no_longer_flips_past_bounds(self):
+        from save_parser import _stimulation_inheritance_weight as w
+        # Pre-fix, stim in (-200, -100) went negative and stim < -200 exceeded 1.0
+        # (the game's 1.1.21016 bug). All values must now stay within [0, 1].
+        for stim in (-50, -150, -200, -250, -300, -1000):
+            assert 0.0 <= w(stim) <= 1.0, stim
+        assert w(-300) == 0.0
+
+    def test_defect_weight_penalized_by_inbreeding(self):
+        from save_parser import (
+            _defect_inheritance_weight as dw,
+            _stimulation_inheritance_weight as w,
+        )
+        # No inbreeding: identical to the normal weight.
+        assert dw(50, 0.0) == w(50)
+        # Effective stim = stim - 2 * inbreeding%: 50 - 2*25 = 0 -> 50/50.
+        assert dw(50, 0.25) == w(0) == 0.5
+        # Heavy inbreeding drives defect inheritance up (weight favors the
+        # defective parent's part more than stimulation alone would suppress).
+        assert dw(50, 0.50) < dw(50, 0.25) < dw(50, 0.0)
+
+
+class TestTraitLossPenalty:
+    """1.1: the Mutation stat no longer rerolls existing traits — only the
+    Health/disorder half of the avoid-trait-loss penalty remains."""
+
+    @staticmethod
+    def _room(evolution=0.0, health=0.0):
+        from room_optimizer.types import RoomConfig, RoomType
+        return RoomConfig("r1", RoomType.BREEDING, 6, 50.0,
+                          evolution=evolution, health=health)
+
+    @staticmethod
+    def _cat(mutations=(), disorders=()):
+        from types import SimpleNamespace
+        return SimpleNamespace(mutations=list(mutations), disorders=list(disorders))
+
+    def test_high_evolution_no_longer_penalizes_mutations(self):
+        from room_optimizer.optimizer import _trait_loss_penalty
+        cat = self._cat(mutations=["Gem Eyes"])
+        room = self._room(evolution=80.0)
+        traits = [{"category": "mutation", "key": "Gem Eyes", "weight": 5}]
+        assert _trait_loss_penalty(cat, room, traits) == 0.0
+
+    def test_high_health_still_penalizes_disorders(self):
+        from room_optimizer.optimizer import _trait_loss_penalty
+        cat = self._cat(disorders=["Sociopathy"])
+        room = self._room(health=60.0)
+        traits = [{"category": "disorder", "key": "Sociopathy", "weight": 5}]
+        assert _trait_loss_penalty(cat, room, traits) == pytest.approx(5 * 0.6)
+
+
+class TestUnresolvedKeyGuard:
+    """Descriptions/names whose string key is missing from the text tables
+    must not leak raw ALL_CAPS keys into the UI."""
+
+    def test_loader_skips_unresolved_desc_and_name(self, tmp_path):
+        from mewgenics.utils.abilities import (
+            _ABILITY_DESC, _ABILITY_NAMES, _load_ability_descriptions,
+        )
+        entries = [
+            ('data/text/abilities.csv', b'KEY,en\nABILITY_GOOD_DESC,Does a thing.\n'),
+            ('data/passives/p.gon',
+             b'GoodOne {\n    desc "ABILITY_GOOD_DESC"\n}\n'
+             b'Lucky {\n    name "PASSIVE_LUCKY_NAME"\n    desc "PASSIVE_LUCKY_DESC"\n}\n'),
+        ]
+        gpak = tmp_path / 'mini.gpak'
+        with open(gpak, 'wb') as f:
+            f.write(struct.pack('<I', len(entries)))
+            for name, blob in entries:
+                enc = name.encode()
+                f.write(struct.pack('<H', len(enc)))
+                f.write(enc)
+                f.write(struct.pack('<I', len(blob)))
+            for _, blob in entries:
+                f.write(blob)
+
+        saved_names = dict(_ABILITY_NAMES)
+        try:
+            descs = _load_ability_descriptions(str(gpak))
+            assert descs.get('goodone') == 'Does a thing.'
+            # PASSIVE_LUCKY_DESC / _NAME have no text-table entry: neither the
+            # raw key nor a name derived from it may be stored.
+            assert 'lucky' not in descs
+            assert 'lucky' not in _ABILITY_NAMES
+        finally:
+            _ABILITY_NAMES.clear()
+            _ABILITY_NAMES.update(saved_names)

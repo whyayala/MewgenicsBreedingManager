@@ -108,9 +108,10 @@ class OptimizationParams:
     # Eternal youth cats are excluded from this — they are handled separately.
     send_kittens_to_fallback: bool = False
     kitten_age_threshold: int = 2  # age < 2 = kitten (day 0 or 1)
-    # When True, the optimizer penalizes placing cats carrying desired mutations
-    # into high-Evolution rooms, and cats carrying desired disorders into
-    # high-Health rooms (both can be stripped away by the room effects).
+    # When True, the optimizer penalizes placing cats carrying desired
+    # disorders into high-Health rooms (the Health effect can cure them away).
+    # High-Mutation rooms stopped rerolling existing mutations in game 1.1,
+    # so mutations no longer need protecting.
     avoid_trait_loss: bool = False
 
 

@@ -99,14 +99,16 @@ def _select_room_pairs_pure(
     _MAX_DP_CATS = 22
 
     if n <= _MAX_DP_CATS:
-        # Exact bitmask DP — optimal but exponential in room size.
+        # Exact bitmask DP — optimal but exponential in room size. Tracks only
+        # (count, quality, risk); the concrete pair list is never returned, so
+        # building it per state would just burn allocations in the SA hot loop.
         @lru_cache(maxsize=None)
-        def _best(mask: int) -> tuple[int, float, float, tuple[tuple[int, int], ...]]:
+        def _best(mask: int) -> tuple[int, float, float]:
             if mask.bit_count() < 2:
-                return (0, 0.0, 0.0, ())
+                return (0, 0.0, 0.0)
             first_bit = mask & -mask
             first_idx = first_bit.bit_length() - 1
-            best = _best(mask ^ (1 << first_idx))
+            best = _best(mask ^ first_bit)
             for second_idx in range(first_idx + 1, n):
                 if not (mask & (1 << second_idx)):
                     continue
@@ -114,14 +116,13 @@ def _select_room_pairs_pure(
                 if cp is None:
                     continue
                 q, r = cp
-                remainder = _best(mask ^ (1 << first_idx) ^ (1 << second_idx))
-                cand = (remainder[0] + 1, remainder[1] + q, remainder[2] + r,
-                        ((first_idx, second_idx),) + remainder[3])
+                remainder = _best(mask ^ first_bit ^ (1 << second_idx))
+                cand = (remainder[0] + 1, remainder[1] + q, remainder[2] + r)
                 if (cand[0], cand[1], -cand[2]) > (best[0], best[1], -best[2]):
                     best = cand
             return best
 
-        count, total_q, _, _ = _best((1 << n) - 1)
+        count, total_q, _ = _best((1 << n) - 1)
     else:
         # Greedy fallback for large rooms — O(P log P) instead of O(2^N).
         sorted_candidates = sorted(
@@ -205,12 +206,25 @@ def _sa_chain(
     def _room_effective_count(room_key: str, state: dict[int, str]) -> int:
         return sum(0 if cid in fixed_ids else 1 for cid in _room_cats(room_key, state))
 
+    # Room scores depend only on (room_mode, membership) — pair_scores is
+    # frozen for the whole chain. An SA move changes at most two rooms, yet
+    # _state_score visits every room, so without this memo the exponential
+    # bitmask DP re-solves identical memberships thousands of times per chain
+    # (the "More Depth" slowdown on rooms holding 15+ cats).
+    _NO_SCORE = object()
+    room_score_cache: dict[tuple[str, tuple[int, ...]], tuple[float, int] | None] = {}
+
     def _room_score(room_key: str, cat_ids: list[int], stim: float) -> tuple[float, int] | None:
-        result = _select_room_pairs_pure(
-            cat_ids, room_modes.get(room_key, "fallback"), pair_scores, hater_key_map, lover_key_map,
-            avoid_lovers, max_risk, mode_family, family_group_ids,
-        )
-        return result
+        mode = room_modes.get(room_key, "fallback")
+        key = (mode, tuple(sorted(cat_ids)))
+        cached = room_score_cache.get(key, _NO_SCORE)
+        if cached is _NO_SCORE:
+            cached = _select_room_pairs_pure(
+                cat_ids, mode, pair_scores, hater_key_map, lover_key_map,
+                avoid_lovers, max_risk, mode_family, family_group_ids,
+            )
+            room_score_cache[key] = cached
+        return cached
 
     def _room_accepts_cat(room_key: str, cat_id: int, state: dict[int, str]) -> bool:
         cats_in = _room_cats(room_key, state)
@@ -233,12 +247,22 @@ def _sa_chain(
                 if not compat or risk > max_risk:
                     return False
             return True
-        return _room_score(room_key, cats_in + [cat_id], room_stim.get(room_key, 50.0)) is not None
+        # Outside family mode _select_room_pairs_pure never returns None, so
+        # the old `_room_score(...) is not None` here was an exponential DP
+        # evaluated to produce a constant True — capacity (checked above) is
+        # the only remaining constraint.
+        return True
 
     def _state_score(state: dict[int, str]) -> float:
+        # Group cats by room in one pass instead of scanning the full state
+        # once per room.
+        by_room: dict[str, list[int]] = {rk: [] for rk in breeding_room_keys}
+        for cid, rk in state.items():
+            if rk in by_room:
+                by_room[rk].append(cid)
         total_quality = 0.0
         for rk in breeding_room_keys:
-            cats_in = _room_cats(rk, state)
+            cats_in = by_room[rk]
             effective_count = sum(0 if cid in fixed_ids else 1 for cid in cats_in)
             max_c = room_max_cats.get(rk)
             if max_c is not None and effective_count > max_c:

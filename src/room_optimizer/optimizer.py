@@ -57,29 +57,26 @@ def _trait_loss_penalty(
     room: RoomConfig,
     desired_traits: list[dict] | None,
 ) -> float:
-    """Penalty for placing a cat with desired mutations/disorders into a room
-    whose furniture can strip those traits away.
+    """Penalty for placing a cat with desired disorders into a room whose
+    furniture can cure those traits away (high Health rooms).
 
-    Evolution rooms can override desired mutations; Health rooms can cure
-    desired disorders. Penalty scales with the trait weight and the room's
-    Evolution/Health total.
+    High-Mutation ("Evolution") rooms no longer threaten existing traits:
+    since game 1.1 the Mutation stat never rerolls existing mutations or
+    birth defects, so only the Health/disorder half of this penalty remains.
 
     Mutation planner keys are stored as ``"<name>|<mutation_id>"`` when a
     mutation chip ID is available (see `mutation_planner._build_trait_catalog`).
-    `cat.mutations` holds only the display name, so we match by the portion
-    before the pipe on both sides to catch real desired mutations.
+    We match by the portion before the pipe on both sides.
     """
     if not desired_traits:
         return 0.0
-    evolution = max(0.0, float(getattr(room, "evolution", 0.0) or 0.0))
     health = max(0.0, float(getattr(room, "health", 0.0) or 0.0))
-    if evolution <= 0.0 and health <= 0.0:
+    if health <= 0.0:
         return 0.0
 
     def _name_only(raw: str) -> str:
         return str(raw or "").split("|", 1)[0].strip().lower()
 
-    cat_mutations = {_name_only(m) for m in (getattr(cat, "mutations", None) or [])}
     cat_disorders = {_name_only(d) for d in (getattr(cat, "disorders", None) or [])}
     penalty = 0.0
     for trait in desired_traits:
@@ -98,9 +95,7 @@ def _trait_loss_penalty(
         name_key = _name_only(raw_key)
         if not name_key:
             continue
-        if category == "mutation" and evolution > 0.0 and name_key in cat_mutations:
-            penalty += weight * (evolution / 100.0)
-        elif category == "disorder" and health > 0.0 and name_key in cat_disorders:
+        if category == "disorder" and name_key in cat_disorders:
             penalty += weight * (health / 100.0)
     return penalty
 
