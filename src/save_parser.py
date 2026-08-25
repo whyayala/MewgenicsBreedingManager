@@ -159,6 +159,17 @@ class FurnitureItem:
         return bool(self.room)
 
     @property
+    def is_rare(self) -> bool:
+        """True for rare furniture variants, which have doubled stats.
+
+        header_fields[0] is a rarity marker: 0 for every normal item and 2
+        for rares. Verified against a live save — the value-2 rows correlate
+        perfectly with ``can_be_rare true`` GPAK definitions, and items that
+        cannot be rare (special_*) never carry it.
+        """
+        return len(self.header_fields) >= 1 and int(self.header_fields[0]) == 2
+
+    @property
     def room_name_len(self) -> int:
         return int(self.header_fields[2]) if len(self.header_fields) >= 3 else 0
 
@@ -966,10 +977,13 @@ def summarize_furniture_room(
     for item in items:
         definition = definitions.get(item.item_name) if definitions else None
         effects = definition.effects if definition is not None else {}
+        # Rare furniture has doubled stats (positive and negative alike).
+        multiplier = 2.0 if item.is_rare else 1.0
         for key, value in effects.items():
-            all_effects[key] = all_effects.get(key, 0.0) + float(value)
+            scaled = float(value) * multiplier
+            all_effects[key] = all_effects.get(key, 0.0) + scaled
             if key in raw_effects:
-                raw_effects[key] += float(value)
+                raw_effects[key] += scaled
 
     crowd_penalty = max(0, int(cat_count) - 4)
     effective_effects = dict(raw_effects)

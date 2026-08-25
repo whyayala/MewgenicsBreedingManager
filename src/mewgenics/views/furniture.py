@@ -1057,6 +1057,10 @@ class FurnitureView(QWidget):
             display = definition.display_name if definition is not None else item.item_name.replace("_", " ").title()
             desc = definition.description if definition is not None else ""
             effects = definition.effects if definition is not None else {}
+            if item.is_rare:
+                # Rare furniture has doubled stats; label it like the game does.
+                display = _tr("furniture.rare_prefix", default="Rare {name}").format(name=display)
+                effects = {k: v * 2.0 for k, v in effects.items()}
             pinned = int(item.key) in self._pinned_item_keys
             values = [
                 (str(item.key), item.key),

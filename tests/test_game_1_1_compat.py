@@ -319,3 +319,47 @@ class TestUnresolvedKeyGuard:
         finally:
             _ABILITY_NAMES.clear()
             _ABILITY_NAMES.update(saved_names)
+
+
+class TestRareFurniture:
+    """Rare furniture (header_fields[0] == 2 in the save record) has doubled
+    stats; room summaries must scale them."""
+
+    @staticmethod
+    def _item(name, room="Floor1_Large", rare=False):
+        from save_parser import FurnitureItem
+        return FurnitureItem(
+            key=1, version=1, item_name=name, room=room,
+            header_fields=(2 if rare else 0, 0, len(room), 0),
+            placement_fields=(0, 0, 0, 1, 1),
+        )
+
+    @staticmethod
+    def _definition(name, effects):
+        from save_parser import FurnitureDefinition
+        return FurnitureDefinition(item_name=name, display_name=name,
+                                   description="", effects=effects)
+
+    def test_is_rare_flag(self):
+        assert self._item("small_bed", rare=True).is_rare
+        assert not self._item("small_bed", rare=False).is_rare
+
+    def test_rare_doubles_room_effects(self):
+        from save_parser import summarize_furniture_room
+        defs = {"couch": self._definition("couch", {"Comfort": 3.0, "Appeal": -1.0})}
+        normal = summarize_furniture_room([self._item("couch")], defs)
+        rare = summarize_furniture_room([self._item("couch", rare=True)], defs)
+        assert normal.raw_effects["Comfort"] == 3.0
+        assert rare.raw_effects["Comfort"] == 6.0
+        # negatives double too
+        assert normal.all_effects["Appeal"] == -1.0
+        assert rare.all_effects["Appeal"] == -2.0
+
+    def test_save_rare_flags_correlate_with_can_be_rare(self):
+        """In the 1.1 fixture save, every rare-flagged item must be a
+        can_be_rare definition (special_* items can never be rare)."""
+        from save_parser import parse_save
+        save = parse_save(_fixture_save(_FIXTURE_11))
+        flagged = [it for it in save.furniture if it.is_rare]
+        assert flagged, "fixture save should contain rare furniture"
+        assert not any(it.item_name.startswith("special_") for it in flagged)
