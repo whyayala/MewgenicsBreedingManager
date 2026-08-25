@@ -815,11 +815,10 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "This project is back under active maintenance! This fork of the archived original is updated for the Mewgenics 1.1 balance overhaul, verified field-by-field against a current save.",
-            "Class stat modifiers are now applied to total stats. The game adds class mods (e.g. Thief SPD +4, LCK +1, STR −1, CON −1) on top of the save's stat arrays — previously every classed cat's totals were wrong in the cat table and detail panel.",
-            "Ability names match the game again. The 1.1 class rework renamed many abilities while saves kept the old internal tokens (BearHug → Grab, AnimateDead → Eternal Servitude). Names are now resolved from the game's own data files.",
-            "Room Optimizer is dramatically faster on large colonies (~8× on a 4,000-cat save, more with deep lineages), and the Cancel button now actually stops the solver instead of hanging.",
-            "New dev tools: tools/diagnose_cat.py (compare a cat's parsed stats/abilities against the game) and tools/extract_gpak_subset.py (extract just the game data the app reads from resources.gpak).",
+            "Rare furniture stats: rares have doubled effects in-game, but room summaries counted them at base values — Comfort/Stimulation/Health/Evolution were under-reported in any room with rare items (this also fed the Room Optimizer's stimulation numbers). Rares now show as \"Rare {name}\" with doubled values.",
+            "\"More Depth\" is ~6× faster: the simulated-annealing search re-solved an exponential room-scoring problem for every room on every step; room scores are now cached, so More Depth takes seconds instead of minutes on large houses.",
+            "1.1 breeding model: birth-defect inheritance now uses the game's new rule (effective stimulation = stim − 2× inbreeding%), shown in the Mutation Planner; negative-stimulation math matches the game's 1.1 fix; and high-Mutation rooms no longer count as a trait-loss risk (1.1 removed trait rerolling).",
+            "Tooltips no longer show raw string keys (PASSIVE_LUCKY_DESC …) when the game's text tables have no entry.",
         ]
 
         root = QVBoxLayout(self)
