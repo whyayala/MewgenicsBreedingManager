@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.0`
+Current release: `v5.9.1`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -103,6 +103,15 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.1
+
+**1.1 breeding model, rare furniture, and "More Depth" performance.**
+
+- **Rare furniture stats**: rare items have doubled effects in-game; room summaries counted every item at base values, under-reporting Comfort/Stimulation/Health/Evolution in any room with rares (which also skewed the Room Optimizer's stimulation inputs). The save's rarity flag is now read; rares display as "Rare {name}" with doubled values.
+- **"More Depth" ~6× faster**: the simulated-annealing search re-solved an exponential room-pair problem for every room on every step, though a move touches at most two rooms. Room scores are now cached per membership — 49s → 8s on a real 93-cat save (greedy baseline 0.1s).
+- **1.1 breeding model**: birth-defect inheritance uses the game's new rule (effective stimulation = `stim − 2 × inbreeding%`, surfaced in the Mutation Planner); negative-stimulation probabilities are clamped, matching the game's 1.1.21016 fix; high-Mutation rooms are no longer treated as a trait-loss risk (1.1 removed trait rerolling), leaving only the Health-cures-disorders penalty.
+- **Tooltip fix**: unresolved localization keys (`PASSIVE_LUCKY_DESC` …) no longer leak into trait tooltips.
 
 ### v5.9.0
 
