@@ -622,6 +622,44 @@ def _parse_swf_symbol_names(raw: bytes) -> list[str]:
     return names
 
 
+# In-game text renders [img:token] markup as inline icons (the shield glyph,
+# stat glyphs, ...). The app can't draw them inside plain-text labels, so map
+# each token to a readable word — never strip them, or "Gain +2 [img:shield]"
+# degrades to the meaningless "Gain +2".
+_IMG_TOKEN_LABELS: dict[str, str] = {
+    "str": "STR", "dex": "DEX", "con": "CON", "int": "INT",
+    "spd": "SPD", "cha": "CHA", "lck": "LCK",
+    "shield": "Shield",
+    "divineshield": "Divine Shield",
+    "stimulation": "Stimulation",
+    "comfort": "Comfort",
+    "appeal": "Appeal",
+    "health": "Health",
+    "evolution": "Evolution",
+    "champion": "Champion",
+    "elite": "Elite",
+    "retired": "Retired",
+    "male": "Male",
+    "female": "Female",
+}
+_IMG_TAG_RE = re.compile(r"\[img:([^\]]+)\]")
+
+
+def _replace_img_tokens(text: str) -> str:
+    """Replace [img:...] icon markup with readable text labels."""
+
+    def _sub(match: re.Match) -> str:
+        token = match.group(1).strip()
+        label = _IMG_TOKEN_LABELS.get(token.lower())
+        if label is None:
+            # Unknown token (e.g. a format placeholder like {str_aux}):
+            # degrade to a readable title-cased word rather than dropping it.
+            label = token.strip("{}").replace("_", " ").title()
+        return label
+
+    return _IMG_TAG_RE.sub(_sub, str(text or ""))
+
+
 def _resolve_game_string(value: str, game_strings: dict[str, str]) -> str:
     """Resolve chained game-string references of the form [KEY]."""
     current = value.strip()
@@ -700,6 +738,9 @@ def _parse_mutation_gon(
     mutation_strings = mutation_strings or {}
     csv_prefix = f"MUTATION_{category.upper()}_"
 
+    def _localized_desc(raw: str) -> str:
+        return _replace_img_tokens(_resolve_game_string(raw, game_strings)).strip().rstrip(".")
+
     def _extract_block(start_pos: int) -> tuple[str, int]:
         depth, end = 1, start_pos
         while end < len(content) and depth > 0:
@@ -729,9 +770,9 @@ def _parse_mutation_gon(
         is_birth_defect = bool(re.search(r"\btag\s+birth_defect\b", block))
         csv_key = f"{csv_prefix}{slot_id}_DESC"
         if csv_key in mutation_strings:
-            stat_desc = _resolve_game_string(mutation_strings[csv_key], game_strings).strip().rstrip(".")
+            stat_desc = _localized_desc(mutation_strings[csv_key])
         elif csv_key in game_strings:
-            stat_desc = _resolve_game_string(game_strings[csv_key], game_strings).strip().rstrip(".")
+            stat_desc = _localized_desc(game_strings[csv_key])
         else:
             stat_desc = gon_stats
         result[slot_id] = (raw_name, stat_desc, gon_stats, is_birth_defect)
@@ -757,13 +798,13 @@ def _parse_mutation_gon(
             name_match = re.search(r"//\s*(.+)", block)
             raw_name = name_match.group(1).strip().title() if name_match else "Missing Part"
             raw_name = re.sub(r"\s*\(.*", "", raw_name).strip() or raw_name
-            stat_desc = _resolve_game_string(mutation_strings[csv_key_m2], game_strings).strip().rstrip(".")
+            stat_desc = _localized_desc(mutation_strings[csv_key_m2])
             result[0xFFFFFFFE] = (raw_name, stat_desc, _gon_stat_string(block), True)
         elif csv_key_m2 in game_strings:
             name_match = re.search(r"//\s*(.+)", block)
             raw_name = name_match.group(1).strip().title() if name_match else "Missing Part"
             raw_name = re.sub(r"\s*\(.*", "", raw_name).strip() or raw_name
-            stat_desc = _resolve_game_string(game_strings[csv_key_m2], game_strings).strip().rstrip(".")
+            stat_desc = _localized_desc(game_strings[csv_key_m2])
             result[0xFFFFFFFE] = (raw_name, stat_desc, _gon_stat_string(block), True)
         else:
             _block_to_entry(0xFFFFFFFE, block)
@@ -1185,6 +1226,17 @@ _MUTATION_STAT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches descriptions that are nothing but a stat-delta list ("+2 CON, -1
+# CHA"). Detail-text delta parsing must be restricted to these: conditional
+# effect sentences ("Gain +1 INT at the end of each turn") name stats too,
+# but describe in-battle effects that do NOT contribute to the character
+# sheet's totals.
+_PURE_STAT_DELTA_RE = re.compile(
+    r"^\s*[+-]\s*\d+\s*(?:" + "|".join(sorted(_MUTATION_STAT_ALIASES, key=len, reverse=True)) + r")"
+    r"(?:\s*,\s*[+-]\s*\d+\s*(?:" + "|".join(sorted(_MUTATION_STAT_ALIASES, key=len, reverse=True)) + r"))*\s*$",
+    re.IGNORECASE,
+)
+
 
 def _parse_mutation_stat_delta(detail: str) -> dict[str, int]:
     """Parse stat deltas from a mutation/defect detail string.
@@ -1231,11 +1283,16 @@ def _mutation_stat_bonus_from_entries(entries: list[dict[str, object]]) -> dict[
         if key in seen:
             continue
         seen.add(key)
-        # Prefer gon_stats (raw GON block data) over detail (CSV description)
+        # Prefer gon_stats (raw GON block data) over detail (CSV description).
+        # The detail fallback only applies to pure stat lists ("+2 CON, -1
+        # CHA") — conditional sentences name stats for in-battle effects that
+        # must not be folded into character-sheet totals.
         gon = str(entry.get("gon_stats") or "")
         deltas = _parse_mutation_stat_delta(gon) if gon else {}
         if not deltas:
-            deltas = _parse_mutation_stat_delta(str(entry.get("detail") or ""))
+            detail = str(entry.get("detail") or "")
+            if _PURE_STAT_DELTA_RE.match(detail):
+                deltas = _parse_mutation_stat_delta(detail)
         for stat, delta in deltas.items():
             bonus[stat] = bonus.get(stat, 0) + delta
     return bonus
