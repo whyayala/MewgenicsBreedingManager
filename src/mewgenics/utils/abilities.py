@@ -950,6 +950,10 @@ def _cat_has_trait(cat: 'Cat', category: str, trait_key: str) -> bool:
     elif category == "defect":
         if '|' in trait_key:
             mid = int(trait_key.rsplit('|', 1)[1])
+            if mid == -2:
+                # Missing-part sentinel: tooltips (and thus catalog keys) show
+                # ID -2, but entries store the raw u32 sentinel.
+                mid = 0xFFFF_FFFE
             entries = getattr(cat, "visual_mutation_entries", []) or []
             return any(int(e["mutation_id"]) == mid and e.get("is_defect") for e in entries)
         return any(d.lower() == trait_key for d in getattr(cat, "defects", []) or [])

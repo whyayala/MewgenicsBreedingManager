@@ -566,3 +566,20 @@ class TestBasicAttackExclusion:
         # ability_base(20% + 2.5%*50) * favor_weight / 1 non-basic ability
         (prob,) = [r[2] for r in rows if r[0] == "BearHug"]
         assert prob > 0.5
+
+
+class TestCrossViewTraitConsistency:
+    """Detailed Scoring and the Mutation Planner catalog (which feeds the
+    Room Optimizer's trait targets) must agree on what is a trait."""
+
+    def test_sentinel_defect_id_matches(self):
+        from types import SimpleNamespace
+        from mewgenics.utils.abilities import _cat_has_trait
+        cat = SimpleNamespace(visual_mutation_entries=[
+            {"mutation_id": 0xFFFF_FFFE, "is_defect": True},
+        ], defects=["No Ear"])
+        # Catalog keys use the tooltip's "-2" for missing-part sentinels while
+        # entries store the raw u32; both must match.
+        assert _cat_has_trait(cat, "defect", "no ear|-2")
+        assert _cat_has_trait(cat, "defect", "no ear")
+        assert not _cat_has_trait(cat, "defect", "no ear|700")

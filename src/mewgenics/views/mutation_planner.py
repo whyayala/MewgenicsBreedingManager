@@ -900,6 +900,11 @@ class MutationDisorderPlannerView(QWidget):
                 _add_trait("disorder", d, display, _ability_tip(d))
 
             for a in (cat.abilities or []):
+                # Basic attacks come with the class and are never inherited —
+                # exclude them from the targetable catalog (Detailed Scoring
+                # filters them the same way).
+                if is_basic_attack_token(a):
+                    continue
                 display = _mutation_display_name(a)
                 _add_trait("ability", a, display, _ability_tip(a))
 
