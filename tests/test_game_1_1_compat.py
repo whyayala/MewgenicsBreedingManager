@@ -448,3 +448,58 @@ class TestDefectIdentity:
         assert _is_synthetic_visual_mutation_name("Eyes 702", "Eye", "Left Eye", 702)
         assert _is_synthetic_visual_mutation_name("Legs 440", "Arm", "Left Arm", 440)
         assert not _is_synthetic_visual_mutation_name("Cataracts", "Eye", "Left Eye", 705)
+
+
+class TestMutationNameDisambiguation:
+    """Same-name mutations with different effects must get stable identity
+    suffixes; identical-effect duplicates (shared limb table) stay merged."""
+
+    @staticmethod
+    def _install(data):
+        from save_parser import set_visual_mut_data
+        set_visual_mut_data(data)
+
+    def teardown_method(self, method):
+        from save_parser import set_visual_mut_data
+        set_visual_mut_data({})
+
+    def test_cross_category_different_effects_get_part_labels(self):
+        from save_parser import _build_visual_mut_name_disambiguation
+        data = {
+            "legs": {325: ("Extra Head", "-2 SPD", "-2 SPD", False)},
+            "tail": {321: ("Extra Head", "+1 INT", "+1 INT", False)},
+        }
+        out = _build_visual_mut_name_disambiguation(data)
+        assert out[("legs", 325)] == "Legs"
+        assert out[("tail", 321)] == "Tail"
+
+    def test_same_category_different_effects_get_effect_suffix(self):
+        from save_parser import _build_visual_mut_name_disambiguation
+        data = {"eyes": {302: ("Pop Eyes", "+1 range, +1 reach", "", False),
+                         348: ("Pop Eyes", "+1 Thorns", "", False)}}
+        out = _build_visual_mut_name_disambiguation(data)
+        assert out[("eyes", 302)] == "+1 range, +1 reach"
+        assert out[("eyes", 348)] == "+1 Thorns"
+
+    def test_identical_effects_stay_merged(self):
+        from save_parser import _build_visual_mut_name_disambiguation
+        data = {
+            "legs": {301: ("Hooves", "+1 SPD", "+1 SPD", False)},
+            "ears": {999: ("Hooves", "+1 SPD", "+1 SPD", False)},
+        }
+        assert _build_visual_mut_name_disambiguation(data) == {}
+
+    def test_fixture_save_has_no_conflicting_rows(self):
+        """With the 1.1 gpak-derived tables installed, no two mutations with
+        different effects may share a trait-list row text."""
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        sigs = {}
+        for c in cats:
+            for e in (c.visual_mutation_entries or []):
+                if e.get('is_defect'):
+                    continue
+                sig = str(e.get('gon_stats') or e.get('detail') or '')
+                sigs.setdefault(e['name'], set()).add(sig)
+        conflicts = {n: s for n, s in sigs.items() if len(s) > 1}
+        assert not conflicts, conflicts

@@ -433,10 +433,70 @@ def _load_class_stat_mods(file_obj, file_offsets: dict[str, tuple[int, int]]) ->
     return merged
 
 
+# {gpak_category: label} for name disambiguation suffixes.
+_MUT_CATEGORY_LABELS: dict[str, str] = {
+    "texture": "Fur", "body": "Body", "head": "Head", "tail": "Tail",
+    "legs": "Legs", "eyes": "Eyes", "eyebrows": "Eyebrows",
+    "ears": "Ears", "mouth": "Mouth",
+}
+
+# {(gpak_category, mutation_id): suffix} for mutations whose display name
+# collides with a DIFFERENT-effect mutation elsewhere (the game data reuses
+# comments like //slender across eleven body parts, and //Pop Eyes for two
+# different eye mutations). Rebuilt by set_visual_mut_data.
+_VISUAL_MUT_NAME_DISAMBIG: dict[tuple[str, int], str] = {}
+
+
+def _build_visual_mut_name_disambiguation(
+    data: dict[str, dict[int, tuple]],
+) -> dict[tuple[str, int], str]:
+    """Build name-disambiguation suffixes from the visual mutation tables.
+
+    Same-name entries with identical effects stay merged (arms/legs share one
+    limb table, so "Hooves" is one trait). Same-name entries with different
+    effects get a stable identity suffix: the category label when categories
+    differ ("Slender (Eyes)"), plus the effect text or id when two distinct
+    mutations share a category ("Pop Eyes (+1 Thorns)").
+    """
+    groups: dict[str, list[tuple[str, int, str, str]]] = {}
+    for category, table in (data or {}).items():
+        for mid, info in table.items():
+            tup = tuple(info)
+            raw_name = str(tup[0] if tup else "").strip()
+            if not raw_name or re.match(r"(?i)^mutation \d+$", raw_name):
+                continue
+            sig = str(tup[2]).strip() if len(tup) >= 3 and str(tup[2] or "").strip() else (
+                str(tup[1]).strip() if len(tup) >= 2 else "")
+            groups.setdefault(raw_name.casefold(), []).append(
+                (category, int(mid), sig.casefold(), sig))
+
+    out: dict[tuple[str, int], str] = {}
+    for items in groups.values():
+        if len(items) < 2 or len({sig for _, _, sig, _ in items}) <= 1:
+            continue  # unique name, or same effect everywhere — keep merged
+        by_cat: dict[str, list[tuple[int, str, str]]] = {}
+        for cat, mid, sig, sig_disp in items:
+            by_cat.setdefault(cat, []).append((mid, sig, sig_disp))
+        single_category = len(by_cat) == 1
+        for cat, ml in by_cat.items():
+            label = _MUT_CATEGORY_LABELS.get(cat, cat.title())
+            if len({sig for _, sig, _ in ml}) <= 1:
+                # One distinct effect in this category — the label suffices.
+                for mid, _sig, _disp in ml:
+                    out[(cat, mid)] = label
+            else:
+                for mid, _sig, sig_disp in ml:
+                    detail = sig_disp if 0 < len(sig_disp) <= 24 else f"#{mid}"
+                    out[(cat, mid)] = detail if single_category else f"{label}, {detail}"
+    return out
+
+
 def set_visual_mut_data(data: dict[str, dict[int, tuple[str, str, str, bool]]]):
     """Update the visual mutation lookup data (called after gpak loading)."""
     global _VISUAL_MUT_DATA, _GLOBALLY_AMBIGUOUS_MUTATION_NAMES
     _VISUAL_MUT_DATA = data
+    _VISUAL_MUT_NAME_DISAMBIG.clear()
+    _VISUAL_MUT_NAME_DISAMBIG.update(_build_visual_mut_name_disambiguation(data))
     # Extend ambiguous set with GPAK names that appear across categories
     gpak_name_cats: dict[str, set[str]] = {}
     for category, muts in data.items():
@@ -1175,6 +1235,13 @@ def _read_visual_mutation_entries(table: list[int]) -> list[dict[str, object]]:
             # every distinct defect on a body part into one unratable row.
             display_name = f"No {part_label}" if is_sentinel_missing else f"{part_label} Birth Defect"
 
+        # Same-name mutations with different effects ("Slender" on eleven
+        # parts, two different "Pop Eyes") get a stable identity suffix so
+        # trait lists can rate each one separately.
+        _disambig = _VISUAL_MUT_NAME_DISAMBIG.get((gpak_category, mutation_id))
+        if _disambig:
+            display_name = f"{display_name} ({_disambig})"
+
         display_name = str(display_name).strip() or f"{slot_label} {mutation_id}"
         if logger.isEnabledFor(logging.DEBUG) and (verbose_logs or not _is_synthetic_visual_mutation_name(display_name, part_label, slot_label, mutation_id)):
             logger.debug(
@@ -1330,10 +1397,13 @@ def _is_synthetic_visual_mutation_name(display_name: str, part_label: str, slot_
 
 def _visual_mutation_chip_items(entries: list[dict[str, object]]) -> list[tuple[str, str, bool]]:
     """Return [(display_text, tooltip, is_defect), ...] from visual mutation entries."""
+    # Group by (display name, id) rather than (slot group, id): the same limb
+    # mutation on both arm and leg slots is one trait — two chips would make
+    # the trait list fragment it into slot-suffixed variants.
     grouped: dict[tuple[str, int], list[dict[str, object]]] = {}
     order: list[tuple[str, int]] = []
     for entry in entries:
-        key = (str(entry["group_key"]), int(entry["mutation_id"]))
+        key = (str(entry["name"]), int(entry["mutation_id"]))
         if key not in grouped:
             grouped[key] = []
             order.append(key)
