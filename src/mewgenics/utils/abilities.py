@@ -490,6 +490,26 @@ def _ability_tip(name: str) -> str:
     return _ABILITY_DESC.get(key) or _ABILITY_LOOKUP.get(key, "")
 
 
+def _ability_family_tip(name: str) -> str:
+    """Return the tooltip for an ability/passive FAMILY (base + upgrade).
+
+    Trait lists collate an ability with its upgraded tier into one row, so
+    the row's tooltip must always show both effects when an upgrade exists —
+    some traits are only worth keeping for their upgraded form, others are
+    fine at base. Falls back to the base description alone when there is no
+    tier-2 text (disorders, unupgradable traits).
+    """
+    base, _tier = _strip_tier(name)
+    base_tip = _ability_tip(base)
+    tier2_key = re.sub(r'[^a-z0-9]', '', base.lower()) + "2"
+    upgrade_text = _ABILITY_DESC.get(tier2_key, "")
+    if not upgrade_text or upgrade_text == base_tip:
+        return base_tip
+    if base_tip:
+        return f"{base_tip}\n+ Upgraded: {upgrade_text}"
+    return f"+ Upgraded: {upgrade_text}"
+
+
 def _ability_upgraded_tip(name: str, passive_tier: int = 1) -> str:
     """Return tooltip for an ability, appending the tier-2 description when upgraded.
 
@@ -962,7 +982,13 @@ def _cat_has_trait(cat: 'Cat', category: str, trait_key: str) -> bool:
     elif category == "disorder":
         return any(d.lower() == trait_key for d in getattr(cat, "disorders", []) or [])
     elif category == "ability":
-        return any(a.lower() == trait_key for a in getattr(cat, "abilities", []) or [])
+        # Tier-insensitive: catalog keys collate to the base token, and older
+        # saved keys may still carry the '2' suffix — match either way.
+        base_key = _strip_tier(trait_key)[0]
+        return any(
+            a.lower() == trait_key or _strip_tier(a)[0].lower() == base_key
+            for a in getattr(cat, "abilities", []) or []
+        )
     return False
 
 

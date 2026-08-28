@@ -583,3 +583,45 @@ class TestCrossViewTraitConsistency:
         assert _cat_has_trait(cat, "defect", "no ear|-2")
         assert _cat_has_trait(cat, "defect", "no ear")
         assert not _cat_has_trait(cat, "defect", "no ear|700")
+
+
+class TestAbilityFamilyCollation:
+    """Tiered abilities collate into one trait row — the row's tooltip must
+    show BOTH base and upgraded effects, and matching must be tier-blind."""
+
+    def test_family_tip_shows_base_and_upgrade(self):
+        from mewgenics.utils.abilities import _ABILITY_DESC, _ability_family_tip
+        saved = dict(_ABILITY_DESC)
+        _ABILITY_DESC.update({"pierce": "Gain +2 Range.",
+                              "pierce2": "Gain +2 Range. Attacks pass through units."})
+        try:
+            tip = _ability_family_tip("Pierce")
+            assert "Gain +2 Range." in tip
+            assert "+ Upgraded: Gain +2 Range. Attacks pass through units." in tip
+            # same family tip regardless of which tier token asks
+            assert _ability_family_tip("Pierce2") == tip
+        finally:
+            _ABILITY_DESC.clear()
+            _ABILITY_DESC.update(saved)
+
+    def test_family_tip_without_upgrade_is_base_only(self):
+        from mewgenics.utils.abilities import _ABILITY_DESC, _ability_family_tip
+        saved = dict(_ABILITY_DESC)
+        _ABILITY_DESC.update({"shriek": "Inflict Fear in a cone."})
+        try:
+            assert _ability_family_tip("Shriek") == "Inflict Fear in a cone."
+        finally:
+            _ABILITY_DESC.clear()
+            _ABILITY_DESC.update(saved)
+
+    def test_cat_has_trait_matches_across_tiers(self):
+        from types import SimpleNamespace
+        from mewgenics.utils.abilities import _cat_has_trait
+        upgraded = SimpleNamespace(abilities=["Pierce2"])
+        base = SimpleNamespace(abilities=["Pierce"])
+        # base-keyed catalog entry matches both tiers
+        assert _cat_has_trait(upgraded, "ability", "pierce")
+        assert _cat_has_trait(base, "ability", "pierce")
+        # legacy saved key with tier suffix still matches
+        assert _cat_has_trait(upgraded, "ability", "pierce2")
+        assert not _cat_has_trait(base, "ability", "bearhug")

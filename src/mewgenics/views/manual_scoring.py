@@ -17,7 +17,7 @@ from mewgenics.utils.localization import _tr, ROOM_DISPLAY
 from mewgenics.utils.config import _load_ui_state, _save_ui_state, _saved_manual_scoring_auto_calc
 from mewgenics.utils.cat_analysis import _cat_base_sum
 from mewgenics.utils.calibration import _trait_label_from_value
-from mewgenics.utils.abilities import _ability_tip, _mutation_display_name
+from mewgenics.utils.abilities import _ability_family_tip, _mutation_display_name
 from mewgenics.utils.trait_ratings import TraitRatings
 
 
@@ -265,7 +265,7 @@ class _MutationSelector(QWidget):
         self._per_spins.clear()
         for m in all_mutations:
             display = _mutation_display_name(m)
-            tip = _ability_tip(m)
+            tip = _ability_family_tip(m)
             label = f"{display}  —  {tip}" if tip else display
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, m)
@@ -415,7 +415,7 @@ class _MutationSelector(QWidget):
                 # Reconstruct full display text from raw mutation name
                 name = item.data(Qt.UserRole)
                 display = _mutation_display_name(name) if name else ""
-                tip = _ability_tip(name) if name else ""
+                tip = _ability_family_tip(name) if name else ""
                 full = f"{display}  \u2014  {tip}" if tip else display
                 item.setText(full)
                 self._list.removeItemWidget(item)

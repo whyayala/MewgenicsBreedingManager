@@ -22,7 +22,7 @@ from save_parser import (
 
 from mewgenics.utils.localization import _tr, ROOM_DISPLAY
 from mewgenics.utils.abilities import (
-    _mutation_display_name, _ability_tip,
+    _mutation_display_name, _ability_tip, _ability_family_tip, _strip_tier,
     _cat_has_trait, _planner_trait_display_name,
     _trait_selector_summary, _trait_selector_label,
     _trait_display_kind, _trait_visible_detail,
@@ -905,8 +905,12 @@ class MutationDisorderPlannerView(QWidget):
                 # filters them the same way).
                 if is_basic_attack_token(a):
                     continue
-                display = _mutation_display_name(a)
-                _add_trait("ability", a, display, _ability_tip(a))
+                # Collate tiers into one row keyed by the base token (like
+                # Detailed Scoring); the family tip shows base + upgraded
+                # effects so both forms can be judged from one entry.
+                base, _tier = _strip_tier(a)
+                display = _mutation_display_name(base)
+                _add_trait("ability", base, display, _ability_family_tip(base))
 
         rows: list[dict] = []
         for entry in catalog.values():
