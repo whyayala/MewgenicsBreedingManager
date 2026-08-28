@@ -363,3 +363,58 @@ class TestRareFurniture:
         flagged = [it for it in save.furniture if it.is_rare]
         assert flagged, "fixture save should contain rare furniture"
         assert not any(it.item_name.startswith("special_") for it in flagged)
+
+
+class TestImgTokenReplacement:
+    """[img:token] icon markup must render as readable words, never be
+    stripped ("Gain +2 [img:shield]" used to degrade to "Gain +2")."""
+
+    def test_known_tokens(self):
+        from save_parser import _replace_img_tokens
+        assert _replace_img_tokens("Gain +2 [img:shield].") == "Gain +2 Shield."
+        assert _replace_img_tokens("+1 [img:int] and -1 [img:lck]") == "+1 INT and -1 LCK"
+        assert _replace_img_tokens("[img:divineshield] 2") == "Divine Shield 2"
+
+    def test_unknown_token_degrades_readably(self):
+        from save_parser import _replace_img_tokens
+        assert _replace_img_tokens("Gain +1 [img:{str_aux}]") == "Gain +1 Str Aux"
+
+    def test_ability_loader_keeps_stat_words(self, tmp_path):
+        from mewgenics.utils.abilities import _ABILITY_NAMES, _load_ability_descriptions
+        entries = [
+            ('data/text/a.csv', b'KEY,en\nABILITY_BLOCK_DESC,"Gain +2 [img:shield]."\n'),
+            ('data/abilities/a.gon', b'Block {\n    desc "ABILITY_BLOCK_DESC"\n}\n'),
+        ]
+        gpak = tmp_path / 'mini.gpak'
+        with open(gpak, 'wb') as f:
+            f.write(struct.pack('<I', len(entries)))
+            for name, blob in entries:
+                enc = name.encode()
+                f.write(struct.pack('<H', len(enc)))
+                f.write(enc)
+                f.write(struct.pack('<I', len(blob)))
+            for _, blob in entries:
+                f.write(blob)
+        saved = dict(_ABILITY_NAMES)
+        try:
+            descs = _load_ability_descriptions(str(gpak))
+            assert descs['block'] == 'Gain +2 Shield.'
+        finally:
+            _ABILITY_NAMES.clear()
+            _ABILITY_NAMES.update(saved)
+
+    def test_conditional_descriptions_do_not_leak_into_stat_totals(self):
+        """Now that icon stats survive in description text, the detail-based
+        delta fallback must only accept pure stat lists — 'Gain +1 INT at the
+        end of each turn' is an in-battle effect, not a sheet stat."""
+        from save_parser import _mutation_stat_bonus_from_entries
+        entries = [
+            {"group_key": "head", "mutation_id": 314, "gon_stats": "",
+             "detail": "Gain +1 INT at the end of each turn"},
+            {"group_key": "body", "mutation_id": 413, "gon_stats": "",
+             "detail": "+2 DEX, -1 STR"},
+        ]
+        bonus = _mutation_stat_bonus_from_entries(entries)
+        assert bonus["INT"] == 0        # conditional sentence ignored
+        assert bonus["DEX"] == 2        # pure stat list still counted
+        assert bonus["STR"] == -1

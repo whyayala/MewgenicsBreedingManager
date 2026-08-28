@@ -5,7 +5,7 @@ import struct
 from typing import Sequence
 
 from save_parser import (
-    Cat, _load_gpak_text_strings, _resolve_game_string,
+    Cat, _load_gpak_text_strings, _resolve_game_string, _replace_img_tokens,
     _stimulation_inheritance_weight, _extract_primary_language_text,
 )
 
@@ -832,7 +832,10 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
             name_info: dict[str, tuple[str | None, str | None]] = {}
 
             def _clean(text: str) -> str:
-                text = re.sub(r'\[img:[^\]]+\]', '', text)
+                # Icon markup becomes readable words ("+2 [img:shield]" ->
+                # "+2 Shield") — stripping it used to leave effect text
+                # missing its subject ("Gain +2").
+                text = _replace_img_tokens(text)
                 text = re.sub(r'\[s:[^\]]*\]|\[/s\]', '', text)
                 text = re.sub(r'\[c:[^\]]*\]|\[/c\]', '', text)
                 return re.sub(r'\s+', ' ', text).strip()
