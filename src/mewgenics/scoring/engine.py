@@ -8,7 +8,7 @@ re-exports from this module while preserving its own UI-layer constants.
 
 from __future__ import annotations
 
-from save_parser import risk_percent, can_breed
+from save_parser import risk_percent, can_breed, is_basic_attack_token
 
 from mewgenics.scoring.cat_stats import get_cat_stats
 
@@ -194,7 +194,9 @@ def priority_tier(score: float) -> tuple[str, str]:
 
 
 def is_basic_trait(name: str) -> bool:
-    return name.lower().startswith("basic")
+    # Delegates to save_parser so tokens that don't follow the "Basic*"
+    # convention (TinkererCraft) are excluded from trait lists too.
+    return is_basic_attack_token(name)
 
 
 def ability_base(name: str) -> str:

@@ -418,3 +418,210 @@ class TestImgTokenReplacement:
         assert bonus["INT"] == 0        # conditional sentence ignored
         assert bonus["DEX"] == 2        # pure stat list still counted
         assert bonus["STR"] == -1
+
+
+class TestDefectIdentity:
+    """Defects must keep their specific names ("Cataracts", "Blob Legs") so
+    the Detailed Scoring / planner trait lists can rate each one — the old
+    unconditional "{part} Birth Defect" label collapsed every distinct defect
+    on a body part into one row."""
+
+    def test_defects_keep_specific_names(self):
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        names = {d.casefold() for c in cats for d in (getattr(c, 'defects', []) or [])}
+        # Many distinct identities, not ~10 per-part labels
+        assert len(names) > 30
+        assert 'conjoined body' in names
+        assert 'gastroschisis' in names
+
+    def test_unnamed_defect_falls_back_to_part_label(self):
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        names = {d for c in cats for d in (getattr(c, 'defects', []) or [])}
+        # eyes.gon block 702 has no name comment anywhere -> part-level label,
+        # never a synthetic "Eyes 702".
+        assert not any(n.split()[-1].isdigit() for n in names), sorted(names)
+
+    def test_synthetic_name_detector_catches_word_number(self):
+        from save_parser import _is_synthetic_visual_mutation_name
+        assert _is_synthetic_visual_mutation_name("Eyes 702", "Eye", "Left Eye", 702)
+        assert _is_synthetic_visual_mutation_name("Legs 440", "Arm", "Left Arm", 440)
+        assert not _is_synthetic_visual_mutation_name("Cataracts", "Eye", "Left Eye", 705)
+
+
+class TestMutationNameDisambiguation:
+    """Same-name mutations with different effects must get stable identity
+    suffixes; identical-effect duplicates (shared limb table) stay merged."""
+
+    @staticmethod
+    def _install(data):
+        from save_parser import set_visual_mut_data
+        set_visual_mut_data(data)
+
+    def teardown_method(self, method):
+        from save_parser import set_visual_mut_data
+        set_visual_mut_data({})
+
+    def test_cross_category_different_effects_get_part_labels(self):
+        from save_parser import _build_visual_mut_name_disambiguation
+        data = {
+            "legs": {325: ("Extra Head", "-2 SPD", "-2 SPD", False)},
+            "tail": {321: ("Extra Head", "+1 INT", "+1 INT", False)},
+        }
+        out = _build_visual_mut_name_disambiguation(data)
+        assert out[("legs", 325)] == "Legs"
+        assert out[("tail", 321)] == "Tail"
+
+    def test_same_category_different_effects_get_effect_suffix(self):
+        from save_parser import _build_visual_mut_name_disambiguation
+        data = {"eyes": {302: ("Pop Eyes", "+1 range, +1 reach", "", False),
+                         348: ("Pop Eyes", "+1 Thorns", "", False)}}
+        out = _build_visual_mut_name_disambiguation(data)
+        assert out[("eyes", 302)] == "+1 range, +1 reach"
+        assert out[("eyes", 348)] == "+1 Thorns"
+
+    def test_identical_effects_stay_merged(self):
+        from save_parser import _build_visual_mut_name_disambiguation
+        data = {
+            "legs": {301: ("Hooves", "+1 SPD", "+1 SPD", False)},
+            "ears": {999: ("Hooves", "+1 SPD", "+1 SPD", False)},
+        }
+        assert _build_visual_mut_name_disambiguation(data) == {}
+
+    def test_fixture_save_has_no_conflicting_rows(self):
+        """With the 1.1 gpak-derived tables installed, no two mutations with
+        different effects may share a trait-list row text."""
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        sigs = {}
+        for c in cats:
+            for e in (c.visual_mutation_entries or []):
+                if e.get('is_defect'):
+                    continue
+                sig = str(e.get('gon_stats') or e.get('detail') or '')
+                sigs.setdefault(e['name'], set()).add(sig)
+        conflicts = {n: s for n, s in sigs.items() if len(s) > 1}
+        assert not conflicts, conflicts
+
+
+class TestClassExtraction:
+    """Class strings are located by pattern, not fixed blob-end offset —
+    variant tails (retired cats' equipment records) broke the old scan,
+    leaving 50 classed cats "classless" in a real save (and their class stat
+    mods unapplied)."""
+
+    def test_class_basics_only_on_classed_cats(self):
+        """The definitive invariant from in-game behavior: class basic
+        attacks appear only on cats whose class parsed."""
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        class_basics = {
+            'BasicMelee_Fighter', 'BasicTankMelee', 'BasicMonkMelee',
+            'BasicButcherMelee', 'BasicMedicMelee', 'BasicDruidAbility',
+            'BasicNecroRanged', 'BasicPsychicPull', 'BasicRanged_Hunter',
+            'BasicStraightShot_Thief', 'BasicMagicShortRanged', 'TinkererCraft',
+        }
+        offenders = [c.name for c in cats if not c.cat_class
+                     and any(t in class_basics for t in (c.abilities or []))]
+        assert offenders == [], offenders
+
+    def test_class_recovered_on_variant_tail_blobs(self):
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        classed = sum(1 for c in cats if c.cat_class)
+        # 495 classed cats in the fixture (was 445 with the fixed-offset scan)
+        assert classed >= 490, classed
+
+    def test_find_class_string_end(self):
+        import struct
+        from save_parser import _find_class_string_end
+        blob = b"\x00" * 40 + struct.pack("<II", 5, 0) + b"Thief" + b"\x00" * 200
+        found = _find_class_string_end(blob)
+        assert found == (40 + 8 + 5, "Thief")
+        assert _find_class_string_end(b"\x00" * 64) is None
+
+
+class TestBasicAttackExclusion:
+    """Basic attacks come with the class and are never inherited — they must
+    be excluded from trait rating lists and inheritance odds."""
+
+    def test_tinkerercraft_counts_as_basic(self):
+        from mewgenics.scoring.engine import is_basic_trait
+        assert is_basic_trait("TinkererCraft")
+        assert is_basic_trait("BasicTankMelee")
+        assert not is_basic_trait("BearHug")
+
+    def test_inheritance_odds_exclude_basics(self):
+        from types import SimpleNamespace
+        from mewgenics.utils.abilities import _trait_inheritance_probabilities
+        a = SimpleNamespace(name="A", abilities=["BasicTankMelee", "BearHug"],
+                            passive_abilities=[], mutations=[], disorders=[])
+        b = SimpleNamespace(name="B", abilities=["TinkererCraft"],
+                            passive_abilities=[], mutations=[], disorders=[])
+        rows = _trait_inheritance_probabilities(a, b, 50.0)
+        names = {r[0] for r in rows if r[1] == "ability"}
+        assert names == {"BearHug"}
+        # BearHug's odds must not be diluted by the basic attack:
+        # ability_base(20% + 2.5%*50) * favor_weight / 1 non-basic ability
+        (prob,) = [r[2] for r in rows if r[0] == "BearHug"]
+        assert prob > 0.5
+
+
+class TestCrossViewTraitConsistency:
+    """Detailed Scoring and the Mutation Planner catalog (which feeds the
+    Room Optimizer's trait targets) must agree on what is a trait."""
+
+    def test_sentinel_defect_id_matches(self):
+        from types import SimpleNamespace
+        from mewgenics.utils.abilities import _cat_has_trait
+        cat = SimpleNamespace(visual_mutation_entries=[
+            {"mutation_id": 0xFFFF_FFFE, "is_defect": True},
+        ], defects=["No Ear"])
+        # Catalog keys use the tooltip's "-2" for missing-part sentinels while
+        # entries store the raw u32; both must match.
+        assert _cat_has_trait(cat, "defect", "no ear|-2")
+        assert _cat_has_trait(cat, "defect", "no ear")
+        assert not _cat_has_trait(cat, "defect", "no ear|700")
+
+
+class TestAbilityFamilyCollation:
+    """Tiered abilities collate into one trait row — the row's tooltip must
+    show BOTH base and upgraded effects, and matching must be tier-blind."""
+
+    def test_family_tip_shows_base_and_upgrade(self):
+        from mewgenics.utils.abilities import _ABILITY_DESC, _ability_family_tip
+        saved = dict(_ABILITY_DESC)
+        _ABILITY_DESC.update({"pierce": "Gain +2 Range.",
+                              "pierce2": "Gain +2 Range. Attacks pass through units."})
+        try:
+            tip = _ability_family_tip("Pierce")
+            assert "Gain +2 Range." in tip
+            assert "+ Upgraded: Gain +2 Range. Attacks pass through units." in tip
+            # same family tip regardless of which tier token asks
+            assert _ability_family_tip("Pierce2") == tip
+        finally:
+            _ABILITY_DESC.clear()
+            _ABILITY_DESC.update(saved)
+
+    def test_family_tip_without_upgrade_is_base_only(self):
+        from mewgenics.utils.abilities import _ABILITY_DESC, _ability_family_tip
+        saved = dict(_ABILITY_DESC)
+        _ABILITY_DESC.update({"shriek": "Inflict Fear in a cone."})
+        try:
+            assert _ability_family_tip("Shriek") == "Inflict Fear in a cone."
+        finally:
+            _ABILITY_DESC.clear()
+            _ABILITY_DESC.update(saved)
+
+    def test_cat_has_trait_matches_across_tiers(self):
+        from types import SimpleNamespace
+        from mewgenics.utils.abilities import _cat_has_trait
+        upgraded = SimpleNamespace(abilities=["Pierce2"])
+        base = SimpleNamespace(abilities=["Pierce"])
+        # base-keyed catalog entry matches both tiers
+        assert _cat_has_trait(upgraded, "ability", "pierce")
+        assert _cat_has_trait(base, "ability", "pierce")
+        # legacy saved key with tier suffix still matches
+        assert _cat_has_trait(upgraded, "ability", "pierce2")
+        assert not _cat_has_trait(base, "ability", "bearhug")

@@ -387,6 +387,57 @@ def get_class_stat_mods(class_name: str) -> dict[str, int]:
     return _CLASS_STAT_MODS.get(class_name, {})
 
 
+# Basic-attack tokens that don't follow the "Basic*" naming convention
+# (defined in the gpak's data/abilities/basic_attacks.gon like the rest).
+_BASIC_ATTACK_EXTRA_TOKENS = frozenset({"tinkerercraft"})
+
+
+def is_basic_attack_token(name: str) -> bool:
+    """True for basic-attack ability tokens (class basics included).
+
+    Basic attacks come with the cat's class and are never inherited by
+    kittens, so trait lists and inheritance math must skip them.
+    """
+    lowered = str(name or "").lower()
+    return lowered.startswith("basic") or lowered in _BASIC_ATTACK_EXTRA_TOKENS
+
+
+# Class strings that can appear in the save's trailing class field. The gpak
+# classes.gon is the live source (via _CLASS_STAT_MODS); this builtin list
+# keeps the locator working when no game data is loaded.
+# Note: "Colorless" is the save's INTERNAL token for an unclassed cat — the
+# game UI presents that state as "Collarless" (classes are granted by
+# collars). The parser maps it to cat_class = "", so neither spelling is
+# ever displayed.
+_KNOWN_CLASS_STRINGS = (
+    "Colorless", "Fighter", "Tank", "Monk", "Butcher", "Medic", "Druid",
+    "Necromancer", "Psychic", "Hunter", "Thief", "Mage", "Tinkerer",
+    "Jester",
+)
+
+
+def _find_class_string_end(raw: bytes) -> tuple[int, str] | None:
+    """Locate the trailing class field and return (end_offset, class_name).
+
+    The field is stored as u32 length + u32 zero-pad + UTF-8 name. Most cats
+    have it ending exactly _CLASS_STRING_TAIL_OFFSET bytes before the blob
+    end, but some blobs (retired cats with trailing equipment records, and a
+    one-byte variant) carry extra data after it — so fixed end-of-blob
+    offsets miss the field entirely, which also broke the age and death-day
+    reads anchored the same way. Searching for the last occurrence of the
+    length-prefixed pattern over the known class names is layout-independent.
+    """
+    best: tuple[int, str] | None = None
+    for name in set(_KNOWN_CLASS_STRINGS) | set(_CLASS_STAT_MODS):
+        token = struct.pack("<II", len(name), 0) + name.encode()
+        pos = raw.rfind(token)
+        if pos >= 0:
+            end = pos + len(token)
+            if best is None or end > best[0]:
+                best = (end, name)
+    return best
+
+
 def _parse_class_stat_mods_gon(content: str) -> dict[str, dict[str, int]]:
     """Parse a class GON file and extract stat_mods for each class."""
     result: dict[str, dict[str, int]] = {}
@@ -433,10 +484,70 @@ def _load_class_stat_mods(file_obj, file_offsets: dict[str, tuple[int, int]]) ->
     return merged
 
 
+# {gpak_category: label} for name disambiguation suffixes.
+_MUT_CATEGORY_LABELS: dict[str, str] = {
+    "texture": "Fur", "body": "Body", "head": "Head", "tail": "Tail",
+    "legs": "Legs", "eyes": "Eyes", "eyebrows": "Eyebrows",
+    "ears": "Ears", "mouth": "Mouth",
+}
+
+# {(gpak_category, mutation_id): suffix} for mutations whose display name
+# collides with a DIFFERENT-effect mutation elsewhere (the game data reuses
+# comments like //slender across eleven body parts, and //Pop Eyes for two
+# different eye mutations). Rebuilt by set_visual_mut_data.
+_VISUAL_MUT_NAME_DISAMBIG: dict[tuple[str, int], str] = {}
+
+
+def _build_visual_mut_name_disambiguation(
+    data: dict[str, dict[int, tuple]],
+) -> dict[tuple[str, int], str]:
+    """Build name-disambiguation suffixes from the visual mutation tables.
+
+    Same-name entries with identical effects stay merged (arms/legs share one
+    limb table, so "Hooves" is one trait). Same-name entries with different
+    effects get a stable identity suffix: the category label when categories
+    differ ("Slender (Eyes)"), plus the effect text or id when two distinct
+    mutations share a category ("Pop Eyes (+1 Thorns)").
+    """
+    groups: dict[str, list[tuple[str, int, str, str]]] = {}
+    for category, table in (data or {}).items():
+        for mid, info in table.items():
+            tup = tuple(info)
+            raw_name = str(tup[0] if tup else "").strip()
+            if not raw_name or re.match(r"(?i)^mutation \d+$", raw_name):
+                continue
+            sig = str(tup[2]).strip() if len(tup) >= 3 and str(tup[2] or "").strip() else (
+                str(tup[1]).strip() if len(tup) >= 2 else "")
+            groups.setdefault(raw_name.casefold(), []).append(
+                (category, int(mid), sig.casefold(), sig))
+
+    out: dict[tuple[str, int], str] = {}
+    for items in groups.values():
+        if len(items) < 2 or len({sig for _, _, sig, _ in items}) <= 1:
+            continue  # unique name, or same effect everywhere — keep merged
+        by_cat: dict[str, list[tuple[int, str, str]]] = {}
+        for cat, mid, sig, sig_disp in items:
+            by_cat.setdefault(cat, []).append((mid, sig, sig_disp))
+        single_category = len(by_cat) == 1
+        for cat, ml in by_cat.items():
+            label = _MUT_CATEGORY_LABELS.get(cat, cat.title())
+            if len({sig for _, sig, _ in ml}) <= 1:
+                # One distinct effect in this category — the label suffices.
+                for mid, _sig, _disp in ml:
+                    out[(cat, mid)] = label
+            else:
+                for mid, _sig, sig_disp in ml:
+                    detail = sig_disp if 0 < len(sig_disp) <= 24 else f"#{mid}"
+                    out[(cat, mid)] = detail if single_category else f"{label}, {detail}"
+    return out
+
+
 def set_visual_mut_data(data: dict[str, dict[int, tuple[str, str, str, bool]]]):
     """Update the visual mutation lookup data (called after gpak loading)."""
     global _VISUAL_MUT_DATA, _GLOBALLY_AMBIGUOUS_MUTATION_NAMES
     _VISUAL_MUT_DATA = data
+    _VISUAL_MUT_NAME_DISAMBIG.clear()
+    _VISUAL_MUT_NAME_DISAMBIG.update(_build_visual_mut_name_disambiguation(data))
     # Extend ambiguous set with GPAK names that appear across categories
     gpak_name_cats: dict[str, set[str]] = {}
     for category, muts in data.items():
@@ -1167,9 +1278,20 @@ def _read_visual_mutation_entries(table: list[int]) -> list[dict[str, object]]:
             else:
                 display_name = f"{part_label} {mutation_id}"
 
-        if is_defect:
-            # Defects are shown in-game as part-level defect labels.
-            display_name = f"{part_label} Birth Defect"
+        if is_defect and _is_synthetic_visual_mutation_name(display_name, part_label, slot_label, mutation_id):
+            # No specific name resolved — fall back to the part-level label.
+            # When the GON comment or catalog DID provide a name ("Cataracts",
+            # "Blob Legs"), keep it: trait lists key ratings by display name,
+            # and the old unconditional "{part} Birth Defect" label collapsed
+            # every distinct defect on a body part into one unratable row.
+            display_name = f"No {part_label}" if is_sentinel_missing else f"{part_label} Birth Defect"
+
+        # Same-name mutations with different effects ("Slender" on eleven
+        # parts, two different "Pop Eyes") get a stable identity suffix so
+        # trait lists can rate each one separately.
+        _disambig = _VISUAL_MUT_NAME_DISAMBIG.get((gpak_category, mutation_id))
+        if _disambig:
+            display_name = f"{display_name} ({_disambig})"
 
         display_name = str(display_name).strip() or f"{slot_label} {mutation_id}"
         if logger.isEnabledFor(logging.DEBUG) and (verbose_logs or not _is_synthetic_visual_mutation_name(display_name, part_label, slot_label, mutation_id)):
@@ -1304,6 +1426,12 @@ def _is_synthetic_visual_mutation_name(display_name: str, part_label: str, slot_
     if not normalized:
         return True
 
+    # Any bare "<word> <number>" name is a synthetic placeholder regardless of
+    # which label variant produced it (the fallback catalog stores names like
+    # "Eyes 702" built from labels that differ from the current part_label).
+    if re.fullmatch(r"[a-z]+ \d+", normalized):
+        return True
+
     part = str(part_label or "").strip()
     slot = str(slot_label or "").strip()
     candidates = {
@@ -1320,10 +1448,13 @@ def _is_synthetic_visual_mutation_name(display_name: str, part_label: str, slot_
 
 def _visual_mutation_chip_items(entries: list[dict[str, object]]) -> list[tuple[str, str, bool]]:
     """Return [(display_text, tooltip, is_defect), ...] from visual mutation entries."""
+    # Group by (display name, id) rather than (slot group, id): the same limb
+    # mutation on both arm and leg slots is one trait — two chips would make
+    # the trait list fragment it into slot-suffixed variants.
     grouped: dict[tuple[str, int], list[dict[str, object]]] = {}
     order: list[tuple[str, int]] = []
     for entry in entries:
-        key = (str(entry["group_key"]), int(entry["mutation_id"]))
+        key = (str(entry["name"]), int(entry["mutation_id"]))
         if key not in grouped:
             grouped[key] = []
             order.append(key)
@@ -1935,13 +2066,21 @@ class Cat:
         self.defects = defect_display_names
         self.defect_chip_items = [(text, tip) for text, tip, is_def in visual_items if is_def]
 
+        # The trailing fields (creation_day/age, class string, death_day) sit
+        # at fixed offsets relative to the class field, which normally ends
+        # _CLASS_STRING_TAIL_OFFSET bytes before the blob end — but some
+        # blobs carry extra data after it (retired cats' equipment records),
+        # so anchor on the located class field instead of the raw blob end.
+        _class_field = _find_class_string_end(raw)
+        _tail_end = (_class_field[0] + _CLASS_STRING_TAIL_OFFSET) if _class_field else len(raw)
+
         # Extract age from creation_day stored near the end of the blob
         if current_day is not None:
             try:
                 eternal_youth = any(d.lower() == "eternalyouth" for d in (getattr(self, "disorders", None) or []))
                 creation_day_candidates: list[int] = []
                 for offset_from_end in [103, 102, 104, 101, 105, 100, 106, 107, 108, 109, 110]:
-                    pos = len(raw) - offset_from_end
+                    pos = _tail_end - offset_from_end
                     if pos + 4 > len(raw) or pos < 0:
                         continue
                     creation_day = struct.unpack_from('<I', raw, pos)[0]
@@ -1953,40 +2092,45 @@ class Cat:
 
         self.parsed_age = self.age
 
-        # Extract class name from a fixed offset before blob end.
-        # The class string ends exactly 115 bytes before the blob end
-        # (stored as u32 length + u32 zero-pad + UTF-8 class name).
+        # Class name from the located trailing class field (see _tail_end
+        # above). The legacy fixed-offset scan remains as a fallback for
+        # blobs where no known class string matched.
         self.cat_class: str = ""
         self.class_stat_mods: dict[str, int] = {}
         try:
-            class_str_end = len(raw) - _CLASS_STRING_TAIL_OFFSET
-            for class_len in range(3, 30):
-                prefix_pos = class_str_end - class_len - 8
-                if prefix_pos < 0:
-                    break
-                length = struct.unpack_from('<I', raw, prefix_pos)[0]
-                zero = struct.unpack_from('<I', raw, prefix_pos + 4)[0]
-                if length == class_len and zero == 0:
-                    class_name = raw[prefix_pos + 8:prefix_pos + 8 + class_len].decode('utf-8', errors='replace')
-                    if class_name != "Colorless":
-                        self.cat_class = class_name
-                        self.class_stat_mods = _CLASS_STAT_MODS.get(class_name, {})
-                        # The character sheet applies class stat modifiers on
-                        # top of base/mod/sec (they are not stored in any of
-                        # the save's stat arrays), so fold them into
-                        # total_stats like the mutation bonuses above.
-                        for _stat, _delta in self.class_stat_mods.items():
-                            if _stat in self.total_stats:
-                                self.total_stats[_stat] += _delta
-                    break
+            class_name = ""
+            if _class_field is not None:
+                class_name = _class_field[1]
+            else:
+                class_str_end = len(raw) - _CLASS_STRING_TAIL_OFFSET
+                for class_len in range(3, 30):
+                    prefix_pos = class_str_end - class_len - 8
+                    if prefix_pos < 0:
+                        break
+                    length = struct.unpack_from('<I', raw, prefix_pos)[0]
+                    zero = struct.unpack_from('<I', raw, prefix_pos + 4)[0]
+                    if length == class_len and zero == 0:
+                        class_name = raw[prefix_pos + 8:prefix_pos + 8 + class_len].decode('utf-8', errors='replace')
+                        break
+            if class_name and class_name != "Colorless":
+                self.cat_class = class_name
+                self.class_stat_mods = _CLASS_STAT_MODS.get(class_name, {})
+                # The character sheet applies class stat modifiers on top of
+                # base/mod/sec (they are not stored in any of the save's stat
+                # arrays), so fold them into total_stats like the mutation
+                # bonuses above.
+                for _stat, _delta in self.class_stat_mods.items():
+                    if _stat in self.total_stats:
+                        self.total_stats[_stat] += _delta
         except Exception:
             logger.debug("Cat %s: class extraction failed", cat_key, exc_info=True)
 
-        # Death day: an i64 at offset +8 from creation_day (len(raw) - 95).
-        # Value of -1 means alive; a non-negative value is the day the cat died.
+        # Death day: an i64 20 bytes after the class field ends (95 bytes
+        # before the anchored tail end). Value of -1 means alive; a
+        # non-negative value is the day the cat died.
         self.death_day: Optional[int] = None
         try:
-            dd_pos = len(raw) - 95
+            dd_pos = _tail_end - 95
             if dd_pos >= 0 and dd_pos + 8 <= len(raw):
                 dd = struct.unpack_from('<q', raw, dd_pos)[0]
                 max_day = current_day if current_day is not None else 100000

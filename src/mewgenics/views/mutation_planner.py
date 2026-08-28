@@ -17,12 +17,12 @@ from PySide6.QtGui import QColor
 from save_parser import (
     Cat, STAT_NAMES, can_breed, risk_percent, kinship_coi,
     _stimulation_inheritance_weight, _defect_inheritance_weight,
-    _inheritance_candidates, _malady_breakdown,
+    _inheritance_candidates, _malady_breakdown, is_basic_attack_token,
 )
 
 from mewgenics.utils.localization import _tr, ROOM_DISPLAY
 from mewgenics.utils.abilities import (
-    _mutation_display_name, _ability_tip,
+    _mutation_display_name, _ability_tip, _ability_family_tip, _strip_tier,
     _cat_has_trait, _planner_trait_display_name,
     _trait_selector_summary, _trait_selector_label,
     _trait_display_kind, _trait_visible_detail,
@@ -900,8 +900,17 @@ class MutationDisorderPlannerView(QWidget):
                 _add_trait("disorder", d, display, _ability_tip(d))
 
             for a in (cat.abilities or []):
-                display = _mutation_display_name(a)
-                _add_trait("ability", a, display, _ability_tip(a))
+                # Basic attacks come with the class and are never inherited —
+                # exclude them from the targetable catalog (Detailed Scoring
+                # filters them the same way).
+                if is_basic_attack_token(a):
+                    continue
+                # Collate tiers into one row keyed by the base token (like
+                # Detailed Scoring); the family tip shows base + upgraded
+                # effects so both forms can be judged from one entry.
+                base, _tier = _strip_tier(a)
+                display = _mutation_display_name(base)
+                _add_trait("ability", base, display, _ability_family_tip(base))
 
         rows: list[dict] = []
         for entry in catalog.values():
@@ -2451,9 +2460,11 @@ class MutationDisorderPlannerView(QWidget):
                     "\n".join(passive_lines)
                 ))
 
-        if cat_a.abilities or cat_b.abilities:
+        a_spells = [x for x in (cat_a.abilities or []) if not is_basic_attack_token(x)]
+        b_spells = [x for x in (cat_b.abilities or []) if not is_basic_attack_token(x)]
+        if a_spells or b_spells:
             spell_chips, _, _ = _inheritance_candidates(
-                cat_a.abilities or [], cat_b.abilities or [],
+                a_spells, b_spells,
                 stim, _mutation_display_name,
             )
             spell_lines = []

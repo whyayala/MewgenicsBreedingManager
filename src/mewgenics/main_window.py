@@ -134,7 +134,7 @@ from mewgenics.views.manual_scoring import ManualScoringView
 from mewgenics.utils.trait_ratings import TraitRatings
 
 from breed_priority import BreedPriorityView
-from mewgenics.utils.abilities import _mutation_display_name, _ability_tip
+from mewgenics.utils.abilities import _mutation_display_name, _ability_family_tip
 from mewgenics.utils.paths import _scoring_path
 
 
@@ -2303,7 +2303,9 @@ class MainWindow(QMainWindow):
             list(STAT_NAMES),
             ROOM_DISPLAY,
             _mutation_display_name,
-            _ability_tip,
+            # Trait rows collate an ability with its upgraded tier, so the
+            # tooltip must show both effects (family tip).
+            _ability_family_tip,
         )
         self._breed_priority_view.hide()
         self._content_vb.addWidget(self._breed_priority_view, 1)
