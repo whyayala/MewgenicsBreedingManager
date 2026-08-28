@@ -405,6 +405,10 @@ def is_basic_attack_token(name: str) -> bool:
 # Class strings that can appear in the save's trailing class field. The gpak
 # classes.gon is the live source (via _CLASS_STAT_MODS); this builtin list
 # keeps the locator working when no game data is loaded.
+# Note: "Colorless" is the save's INTERNAL token for an unclassed cat — the
+# game UI presents that state as "Collarless" (classes are granted by
+# collars). The parser maps it to cat_class = "", so neither spelling is
+# ever displayed.
 _KNOWN_CLASS_STRINGS = (
     "Colorless", "Fighter", "Tank", "Monk", "Butcher", "Medic", "Druid",
     "Necromancer", "Psychic", "Hunter", "Thief", "Mage", "Tinkerer",
