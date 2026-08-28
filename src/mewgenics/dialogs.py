@@ -815,10 +815,12 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Rare furniture stats: rares have doubled effects in-game, but room summaries counted them at base values — Comfort/Stimulation/Health/Evolution were under-reported in any room with rare items (this also fed the Room Optimizer's stimulation numbers). Rares now show as \"Rare {name}\" with doubled values.",
-            "\"More Depth\" is ~6× faster: the simulated-annealing search re-solved an exponential room-scoring problem for every room on every step; room scores are now cached, so More Depth takes seconds instead of minutes on large houses.",
-            "1.1 breeding model: birth-defect inheritance now uses the game's new rule (effective stimulation = stim − 2× inbreeding%), shown in the Mutation Planner; negative-stimulation math matches the game's 1.1 fix; and high-Mutation rooms no longer count as a trait-loss risk (1.1 removed trait rerolling).",
-            "Tooltips no longer show raw string keys (PASSIVE_LUCKY_DESC …) when the game's text tables have no entry.",
+            "Birth defects have their real names back: \"Cataracts\", \"Blob Legs\", \"Lobster Claw\" — instead of collapsing into generic \"{part} Birth Defect\" rows. Every distinct defect can now be rated individually in Detailed Scoring. Existing defect ratings reset to Undesirable; re-rate the ones you care about.",
+            "Same-name mutations with different effects are now distinguishable: \"Slender (Eyes)\" vs \"Slender (Legs)\" (eleven different mutations shared one name), \"Pop Eyes (+1 Thorns)\" vs \"Pop Eyes (+1 range, +1 reach)\", \"Extra Head (Legs)\" vs \"(Tail)\".",
+            "Fixed class detection for ~50 cats whose saves carry extra trailing data (mostly retired cats) — they showed as classless, and their class stat modifiers were missing from their totals.",
+            "Basic attacks are excluded from rating lists, breeding targets, and inheritance odds everywhere — they come with the class and are never inherited (they were also diluting real abilities' computed inheritance chances).",
+            "Upgraded abilities collate with their base into one trait row, and the tooltip now shows BOTH effects (\"+ Upgraded: ...\") — so traits that only shine when upgraded can be judged fairly.",
+            "Fixed targeting missing-part defects (\"No Ear\") in the Mutation Planner / Room Optimizer — selecting them silently matched no cats.",
         ]
 
         root = QVBoxLayout(self)

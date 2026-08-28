@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.1`
+Current release: `v5.9.2`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -103,6 +103,17 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.2
+
+**Trait identity & cross-view consistency.** Distinct traits no longer collapse into shared rows (or fragment into duplicates), and Detailed Scoring, Simple Scoring, the Mutation Planner, and the Room Optimizer now agree on what a trait is.
+
+- **Birth defects keep their real names** ("Cataracts", "Blob Legs", "Lobster Claw") instead of collapsing into generic "{part} Birth Defect" labels — 56 distinct defects in a real save were shown as 10 unratable rows. Each is now individually ratable; existing defect ratings reset to Undesirable (re-rate as needed).
+- **Same-name mutations with different effects are disambiguated** with stable identity suffixes: "Slender (Eyes)" (eleven different mutations shared the name), "Pop Eyes (+1 Thorns)" vs "Pop Eyes (+1 range, +1 reach)", "Extra Head (Legs)" vs "(Tail)". Identical-effect arm/leg duplicates stay merged as one trait.
+- **Class detection fixed for ~50 cats** whose save blobs carry extra trailing data (mostly retired cats' equipment records): the class field is now located by pattern rather than a fixed offset. Affected cats regained their class — and the class stat modifiers that were missing from their totals. Jesters keeping their original class's basic attack are now parsed correctly.
+- **Basic attacks excluded everywhere** from rating lists, breeding targets, and inheritance odds (including TinkererCraft, which dodged the old name-prefix filter). Verified against a real save: class basics appear only on classed cats — they come with the class and are never inherited, and counting them diluted every real ability's computed inheritance odds.
+- **Ability tiers collate into one row with a full tooltip**: base and upgraded effects both shown ("+ Upgraded: ..."), matching is tier-blind, and the planner catalog now collates the same way as the scoring views.
+- **Missing-part defects ("No Ear") are targetable again** in the Mutation Planner / Room Optimizer — an ID-format mismatch made them silently match no cats.
 
 ### v5.9.1
 
