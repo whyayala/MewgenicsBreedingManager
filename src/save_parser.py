@@ -387,6 +387,53 @@ def get_class_stat_mods(class_name: str) -> dict[str, int]:
     return _CLASS_STAT_MODS.get(class_name, {})
 
 
+# Basic-attack tokens that don't follow the "Basic*" naming convention
+# (defined in the gpak's data/abilities/basic_attacks.gon like the rest).
+_BASIC_ATTACK_EXTRA_TOKENS = frozenset({"tinkerercraft"})
+
+
+def is_basic_attack_token(name: str) -> bool:
+    """True for basic-attack ability tokens (class basics included).
+
+    Basic attacks come with the cat's class and are never inherited by
+    kittens, so trait lists and inheritance math must skip them.
+    """
+    lowered = str(name or "").lower()
+    return lowered.startswith("basic") or lowered in _BASIC_ATTACK_EXTRA_TOKENS
+
+
+# Class strings that can appear in the save's trailing class field. The gpak
+# classes.gon is the live source (via _CLASS_STAT_MODS); this builtin list
+# keeps the locator working when no game data is loaded.
+_KNOWN_CLASS_STRINGS = (
+    "Colorless", "Fighter", "Tank", "Monk", "Butcher", "Medic", "Druid",
+    "Necromancer", "Psychic", "Hunter", "Thief", "Mage", "Tinkerer",
+    "Jester",
+)
+
+
+def _find_class_string_end(raw: bytes) -> tuple[int, str] | None:
+    """Locate the trailing class field and return (end_offset, class_name).
+
+    The field is stored as u32 length + u32 zero-pad + UTF-8 name. Most cats
+    have it ending exactly _CLASS_STRING_TAIL_OFFSET bytes before the blob
+    end, but some blobs (retired cats with trailing equipment records, and a
+    one-byte variant) carry extra data after it — so fixed end-of-blob
+    offsets miss the field entirely, which also broke the age and death-day
+    reads anchored the same way. Searching for the last occurrence of the
+    length-prefixed pattern over the known class names is layout-independent.
+    """
+    best: tuple[int, str] | None = None
+    for name in set(_KNOWN_CLASS_STRINGS) | set(_CLASS_STAT_MODS):
+        token = struct.pack("<II", len(name), 0) + name.encode()
+        pos = raw.rfind(token)
+        if pos >= 0:
+            end = pos + len(token)
+            if best is None or end > best[0]:
+                best = (end, name)
+    return best
+
+
 def _parse_class_stat_mods_gon(content: str) -> dict[str, dict[str, int]]:
     """Parse a class GON file and extract stat_mods for each class."""
     result: dict[str, dict[str, int]] = {}
@@ -2015,13 +2062,21 @@ class Cat:
         self.defects = defect_display_names
         self.defect_chip_items = [(text, tip) for text, tip, is_def in visual_items if is_def]
 
+        # The trailing fields (creation_day/age, class string, death_day) sit
+        # at fixed offsets relative to the class field, which normally ends
+        # _CLASS_STRING_TAIL_OFFSET bytes before the blob end — but some
+        # blobs carry extra data after it (retired cats' equipment records),
+        # so anchor on the located class field instead of the raw blob end.
+        _class_field = _find_class_string_end(raw)
+        _tail_end = (_class_field[0] + _CLASS_STRING_TAIL_OFFSET) if _class_field else len(raw)
+
         # Extract age from creation_day stored near the end of the blob
         if current_day is not None:
             try:
                 eternal_youth = any(d.lower() == "eternalyouth" for d in (getattr(self, "disorders", None) or []))
                 creation_day_candidates: list[int] = []
                 for offset_from_end in [103, 102, 104, 101, 105, 100, 106, 107, 108, 109, 110]:
-                    pos = len(raw) - offset_from_end
+                    pos = _tail_end - offset_from_end
                     if pos + 4 > len(raw) or pos < 0:
                         continue
                     creation_day = struct.unpack_from('<I', raw, pos)[0]
@@ -2033,40 +2088,45 @@ class Cat:
 
         self.parsed_age = self.age
 
-        # Extract class name from a fixed offset before blob end.
-        # The class string ends exactly 115 bytes before the blob end
-        # (stored as u32 length + u32 zero-pad + UTF-8 class name).
+        # Class name from the located trailing class field (see _tail_end
+        # above). The legacy fixed-offset scan remains as a fallback for
+        # blobs where no known class string matched.
         self.cat_class: str = ""
         self.class_stat_mods: dict[str, int] = {}
         try:
-            class_str_end = len(raw) - _CLASS_STRING_TAIL_OFFSET
-            for class_len in range(3, 30):
-                prefix_pos = class_str_end - class_len - 8
-                if prefix_pos < 0:
-                    break
-                length = struct.unpack_from('<I', raw, prefix_pos)[0]
-                zero = struct.unpack_from('<I', raw, prefix_pos + 4)[0]
-                if length == class_len and zero == 0:
-                    class_name = raw[prefix_pos + 8:prefix_pos + 8 + class_len].decode('utf-8', errors='replace')
-                    if class_name != "Colorless":
-                        self.cat_class = class_name
-                        self.class_stat_mods = _CLASS_STAT_MODS.get(class_name, {})
-                        # The character sheet applies class stat modifiers on
-                        # top of base/mod/sec (they are not stored in any of
-                        # the save's stat arrays), so fold them into
-                        # total_stats like the mutation bonuses above.
-                        for _stat, _delta in self.class_stat_mods.items():
-                            if _stat in self.total_stats:
-                                self.total_stats[_stat] += _delta
-                    break
+            class_name = ""
+            if _class_field is not None:
+                class_name = _class_field[1]
+            else:
+                class_str_end = len(raw) - _CLASS_STRING_TAIL_OFFSET
+                for class_len in range(3, 30):
+                    prefix_pos = class_str_end - class_len - 8
+                    if prefix_pos < 0:
+                        break
+                    length = struct.unpack_from('<I', raw, prefix_pos)[0]
+                    zero = struct.unpack_from('<I', raw, prefix_pos + 4)[0]
+                    if length == class_len and zero == 0:
+                        class_name = raw[prefix_pos + 8:prefix_pos + 8 + class_len].decode('utf-8', errors='replace')
+                        break
+            if class_name and class_name != "Colorless":
+                self.cat_class = class_name
+                self.class_stat_mods = _CLASS_STAT_MODS.get(class_name, {})
+                # The character sheet applies class stat modifiers on top of
+                # base/mod/sec (they are not stored in any of the save's stat
+                # arrays), so fold them into total_stats like the mutation
+                # bonuses above.
+                for _stat, _delta in self.class_stat_mods.items():
+                    if _stat in self.total_stats:
+                        self.total_stats[_stat] += _delta
         except Exception:
             logger.debug("Cat %s: class extraction failed", cat_key, exc_info=True)
 
-        # Death day: an i64 at offset +8 from creation_day (len(raw) - 95).
-        # Value of -1 means alive; a non-negative value is the day the cat died.
+        # Death day: an i64 20 bytes after the class field ends (95 bytes
+        # before the anchored tail end). Value of -1 means alive; a
+        # non-negative value is the day the cat died.
         self.death_day: Optional[int] = None
         try:
-            dd_pos = len(raw) - 95
+            dd_pos = _tail_end - 95
             if dd_pos >= 0 and dd_pos + 8 <= len(raw):
                 dd = struct.unpack_from('<q', raw, dd_pos)[0]
                 max_day = current_day if current_day is not None else 100000

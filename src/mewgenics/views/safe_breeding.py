@@ -15,7 +15,7 @@ from PySide6.QtGui import QColor, QBrush, QPalette, QFont
 
 from save_parser import (
     Cat, STAT_NAMES, can_breed, kinship_coi, risk_percent, shared_ancestor_counts, _ancestor_depths,
-    _inheritance_candidates,
+    _inheritance_candidates, is_basic_attack_token,
 )
 from breeding import score_pair, PairFactors
 from mewgenics.constants import STAT_COLORS
@@ -924,8 +924,8 @@ class SafeBreedingView(QWidget):
                 }
                 stim = self._pair_stimulation()
                 active_candidates, _, _ = _inheritance_candidates(
-                    list(getattr(cat, "abilities", []) or []),
-                    list(getattr(other, "abilities", []) or []),
+                    [x for x in (getattr(cat, "abilities", []) or []) if not is_basic_attack_token(x)],
+                    [x for x in (getattr(other, "abilities", []) or []) if not is_basic_attack_token(x)],
                     stim,
                     display_fn=_mutation_display_name,
                 )

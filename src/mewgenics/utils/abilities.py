@@ -7,6 +7,7 @@ from typing import Sequence
 from save_parser import (
     Cat, _load_gpak_text_strings, _resolve_game_string, _replace_img_tokens,
     _stimulation_inheritance_weight, _extract_primary_language_text,
+    is_basic_attack_token,
 )
 
 
@@ -698,8 +699,11 @@ def _trait_inheritance_probabilities(
 
     # Active abilities
     ability_base = 0.2 + 0.025 * stim
-    a_abilities = list(a.abilities or [])
-    b_abilities = list(b.abilities or [])
+    # Basic attacks come with the cat's class and are never inherited —
+    # counting them would also dilute every real ability's odds (each
+    # parent's share is split across their ability list).
+    a_abilities = [x for x in (a.abilities or []) if not is_basic_attack_token(x)]
+    b_abilities = [x for x in (b.abilities or []) if not is_basic_attack_token(x)]
     seen: dict[str, tuple[float, str]] = {}
     b_keys = {x.lower() for x in b_abilities}
 

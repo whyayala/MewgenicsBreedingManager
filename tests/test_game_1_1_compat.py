@@ -503,3 +503,66 @@ class TestMutationNameDisambiguation:
                 sigs.setdefault(e['name'], set()).add(sig)
         conflicts = {n: s for n, s in sigs.items() if len(s) > 1}
         assert not conflicts, conflicts
+
+
+class TestClassExtraction:
+    """Class strings are located by pattern, not fixed blob-end offset —
+    variant tails (retired cats' equipment records) broke the old scan,
+    leaving 50 classed cats "classless" in a real save (and their class stat
+    mods unapplied)."""
+
+    def test_class_basics_only_on_classed_cats(self):
+        """The definitive invariant from in-game behavior: class basic
+        attacks appear only on cats whose class parsed."""
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        class_basics = {
+            'BasicMelee_Fighter', 'BasicTankMelee', 'BasicMonkMelee',
+            'BasicButcherMelee', 'BasicMedicMelee', 'BasicDruidAbility',
+            'BasicNecroRanged', 'BasicPsychicPull', 'BasicRanged_Hunter',
+            'BasicStraightShot_Thief', 'BasicMagicShortRanged', 'TinkererCraft',
+        }
+        offenders = [c.name for c in cats if not c.cat_class
+                     and any(t in class_basics for t in (c.abilities or []))]
+        assert offenders == [], offenders
+
+    def test_class_recovered_on_variant_tail_blobs(self):
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        classed = sum(1 for c in cats if c.cat_class)
+        # 495 classed cats in the fixture (was 445 with the fixed-offset scan)
+        assert classed >= 490, classed
+
+    def test_find_class_string_end(self):
+        import struct
+        from save_parser import _find_class_string_end
+        blob = b"\x00" * 40 + struct.pack("<II", 5, 0) + b"Thief" + b"\x00" * 200
+        found = _find_class_string_end(blob)
+        assert found == (40 + 8 + 5, "Thief")
+        assert _find_class_string_end(b"\x00" * 64) is None
+
+
+class TestBasicAttackExclusion:
+    """Basic attacks come with the class and are never inherited — they must
+    be excluded from trait rating lists and inheritance odds."""
+
+    def test_tinkerercraft_counts_as_basic(self):
+        from mewgenics.scoring.engine import is_basic_trait
+        assert is_basic_trait("TinkererCraft")
+        assert is_basic_trait("BasicTankMelee")
+        assert not is_basic_trait("BearHug")
+
+    def test_inheritance_odds_exclude_basics(self):
+        from types import SimpleNamespace
+        from mewgenics.utils.abilities import _trait_inheritance_probabilities
+        a = SimpleNamespace(name="A", abilities=["BasicTankMelee", "BearHug"],
+                            passive_abilities=[], mutations=[], disorders=[])
+        b = SimpleNamespace(name="B", abilities=["TinkererCraft"],
+                            passive_abilities=[], mutations=[], disorders=[])
+        rows = _trait_inheritance_probabilities(a, b, 50.0)
+        names = {r[0] for r in rows if r[1] == "ability"}
+        assert names == {"BearHug"}
+        # BearHug's odds must not be diluted by the basic attack:
+        # ability_base(20% + 2.5%*50) * favor_weight / 1 non-basic ability
+        (prob,) = [r[2] for r in rows if r[0] == "BearHug"]
+        assert prob > 0.5

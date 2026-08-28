@@ -18,6 +18,7 @@ from save_parser import (
     _appearance_group_names, _appearance_preview_text,
     _inheritance_candidates,
     _malady_breakdown,
+    is_basic_attack_token,
 )
 from breeding import (
     pair_projection, score_pair as score_pair_factors,
@@ -971,8 +972,8 @@ class CatDetailPanel(QWidget):
 
         stim = float(self._pair_stimulation)
         active_candidates, share_a, share_b = _inheritance_candidates(
-            list(a.abilities),
-            list(b.abilities),
+            [x for x in (a.abilities or []) if not is_basic_attack_token(x)],
+            [x for x in (b.abilities or []) if not is_basic_attack_token(x)],
             stim,
         )
         passive_candidates, _, _ = _inheritance_candidates(

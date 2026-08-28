@@ -17,7 +17,7 @@ from PySide6.QtGui import QColor
 from save_parser import (
     Cat, STAT_NAMES, can_breed, risk_percent, kinship_coi,
     _stimulation_inheritance_weight, _defect_inheritance_weight,
-    _inheritance_candidates, _malady_breakdown,
+    _inheritance_candidates, _malady_breakdown, is_basic_attack_token,
 )
 
 from mewgenics.utils.localization import _tr, ROOM_DISPLAY
@@ -2451,9 +2451,11 @@ class MutationDisorderPlannerView(QWidget):
                     "\n".join(passive_lines)
                 ))
 
-        if cat_a.abilities or cat_b.abilities:
+        a_spells = [x for x in (cat_a.abilities or []) if not is_basic_attack_token(x)]
+        b_spells = [x for x in (cat_b.abilities or []) if not is_basic_attack_token(x)]
+        if a_spells or b_spells:
             spell_chips, _, _ = _inheritance_candidates(
-                cat_a.abilities or [], cat_b.abilities or [],
+                a_spells, b_spells,
                 stim, _mutation_display_name,
             )
             spell_lines = []

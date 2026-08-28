@@ -39,7 +39,11 @@ def test_trait_inheritance_probabilities_returns_all_categories():
 
     categories = {category for _, category, _, _ in results}
     assert {"ability", "passive", "mutation"} <= categories
-    assert any(display == "BasicShortRanged" for display, category, _, _ in results if category == "ability")
+    ability_names = {display for display, category, _, _ in results if category == "ability"}
+    # Basic attacks come with the class and are never inherited — they must
+    # be excluded from the pool (they'd also dilute real abilities' odds).
+    assert "BasicShortRanged" not in ability_names
+    assert "WetHairball" in ability_names
 
 
 def test_source_summary_marks_repaired_pedigree(monkeypatch):
