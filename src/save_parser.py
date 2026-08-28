@@ -1167,9 +1167,13 @@ def _read_visual_mutation_entries(table: list[int]) -> list[dict[str, object]]:
             else:
                 display_name = f"{part_label} {mutation_id}"
 
-        if is_defect:
-            # Defects are shown in-game as part-level defect labels.
-            display_name = f"{part_label} Birth Defect"
+        if is_defect and _is_synthetic_visual_mutation_name(display_name, part_label, slot_label, mutation_id):
+            # No specific name resolved — fall back to the part-level label.
+            # When the GON comment or catalog DID provide a name ("Cataracts",
+            # "Blob Legs"), keep it: trait lists key ratings by display name,
+            # and the old unconditional "{part} Birth Defect" label collapsed
+            # every distinct defect on a body part into one unratable row.
+            display_name = f"No {part_label}" if is_sentinel_missing else f"{part_label} Birth Defect"
 
         display_name = str(display_name).strip() or f"{slot_label} {mutation_id}"
         if logger.isEnabledFor(logging.DEBUG) and (verbose_logs or not _is_synthetic_visual_mutation_name(display_name, part_label, slot_label, mutation_id)):
@@ -1302,6 +1306,12 @@ def _is_synthetic_visual_mutation_name(display_name: str, part_label: str, slot_
     """Return True when the resolved name is still just a generic fallback."""
     normalized = str(display_name or "").strip().casefold()
     if not normalized:
+        return True
+
+    # Any bare "<word> <number>" name is a synthetic placeholder regardless of
+    # which label variant produced it (the fallback catalog stores names like
+    # "Eyes 702" built from labels that differ from the current part_label).
+    if re.fullmatch(r"[a-z]+ \d+", normalized):
         return True
 
     part = str(part_label or "").strip()

@@ -418,3 +418,33 @@ class TestImgTokenReplacement:
         assert bonus["INT"] == 0        # conditional sentence ignored
         assert bonus["DEX"] == 2        # pure stat list still counted
         assert bonus["STR"] == -1
+
+
+class TestDefectIdentity:
+    """Defects must keep their specific names ("Cataracts", "Blob Legs") so
+    the Detailed Scoring / planner trait lists can rate each one — the old
+    unconditional "{part} Birth Defect" label collapsed every distinct defect
+    on a body part into one row."""
+
+    def test_defects_keep_specific_names(self):
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        names = {d.casefold() for c in cats for d in (getattr(c, 'defects', []) or [])}
+        # Many distinct identities, not ~10 per-part labels
+        assert len(names) > 30
+        assert 'conjoined body' in names
+        assert 'gastroschisis' in names
+
+    def test_unnamed_defect_falls_back_to_part_label(self):
+        from save_parser import parse_save
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        names = {d for c in cats for d in (getattr(c, 'defects', []) or [])}
+        # eyes.gon block 702 has no name comment anywhere -> part-level label,
+        # never a synthetic "Eyes 702".
+        assert not any(n.split()[-1].isdigit() for n in names), sorted(names)
+
+    def test_synthetic_name_detector_catches_word_number(self):
+        from save_parser import _is_synthetic_visual_mutation_name
+        assert _is_synthetic_visual_mutation_name("Eyes 702", "Eye", "Left Eye", 702)
+        assert _is_synthetic_visual_mutation_name("Legs 440", "Arm", "Left Arm", 440)
+        assert not _is_synthetic_visual_mutation_name("Cataracts", "Eye", "Left Eye", 705)
