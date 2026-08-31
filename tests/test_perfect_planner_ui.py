@@ -2055,9 +2055,11 @@ def test_mutation_planner_two_cat_selection_builds_outcome_panel(qt_app, planner
 
 def test_perfect_planner_import_button_uses_mutation_traits(qt_app, planner_config, monkeypatch):
     mutation_view = mm.MutationDisorderPlannerView()
-    mutation_view._selected_traits = [
+    # Set through the supported API: _selected_traits aliases the active
+    # tree's list, so rebinding it directly detaches it from the profile.
+    mutation_view._set_active_mode_traits([
         {"category": "mutation", "key": "twoedarm", "display": "[Mutation] Two-Toed Arm", "weight": 4},
-    ]
+    ])
 
     view = mm.PerfectCatPlannerView()
     view.set_mutation_planner_view(mutation_view)
@@ -2216,3 +2218,62 @@ def test_reset_ui_settings_action_resets_pane_views_without_touching_save_data(q
     assert len(calls) == 4
     assert mm._saved_room_optimizer_auto_recalc() is False
     assert messages[-1] == "UI settings reset to defaults"
+
+
+def test_bulk_remove_preserves_remaining_trait_weights(qt_app, planner_config):
+    """Removing traits via the trait table must not reset the surviving
+    traits' weights — clearing the list first made every remainder fall back
+    to the default +5, silently flipping undesired selections to desired."""
+    mutation_view = mm.MutationDisorderPlannerView()
+    mutation_view._trait_catalog = [
+        {"category": "mutation", "key": key, "display": key.title(), "tip": "",
+         "desc": "", "stats": "", "kind": "", "cats": 1, "order": 0}
+        for key in ("keep_bad", "keep_good", "drop_me")
+    ]
+    mutation_view._set_active_mode_traits([
+        {"category": "mutation", "key": "keep_bad", "display": "Keep Bad", "weight": -8},
+        {"category": "mutation", "key": "keep_good", "display": "Keep Good", "weight": 7},
+        {"category": "mutation", "key": "drop_me", "display": "Drop Me", "weight": 3},
+    ])
+
+    mutation_view._selected_trait_datas_from_table = lambda: [("mutation", "drop_me")]
+    mutation_view._on_remove_selected_trait()
+
+    weights = {t["key"]: t["weight"] for t in mutation_view.get_selected_traits()}
+    assert weights == {"keep_bad": -8, "keep_good": 7}
+
+
+def test_tree_traits_do_not_leak_into_best_pairs(qt_app, planner_config):
+    """Traits selected in one tree must not be copied into Best Pairs.
+
+    get_mode_profiles() used to pass the ACTIVE tree's live trait list as
+    `legacy_traits`, which the normalizer copied into Best Pairs whenever
+    Best Pairs was empty.
+    """
+    mutation_view = mm.MutationDisorderPlannerView()
+    mutation_view._selected_mode = "melee"
+    mutation_view._sync_selected_traits_reference()
+    mutation_view._set_active_mode_traits([
+        {"category": "mutation", "key": "melee_only", "display": "Melee Only", "weight": -6},
+    ])
+
+    profiles = mutation_view.get_mode_profiles()
+    assert profiles["best_pairs"]["traits"] == []
+    assert [(t["key"], t["weight"]) for t in profiles["melee"]["traits"]] == [("melee_only", -6)]
+    assert profiles["ranged"]["traits"] == []
+
+
+def test_legacy_flat_traits_still_migrate_to_best_pairs():
+    """A pre-multi-tree payload (flat selected_traits, no mode_profiles) must
+    still migrate into Best Pairs."""
+    from mewgenics.utils.planner_state import _normalize_mutation_mode_profiles
+    legacy = [{"category": "mutation", "key": "old", "display": "Old", "weight": -4}]
+
+    migrated = _normalize_mutation_mode_profiles({}, legacy_traits=legacy)
+    assert [(t["key"], t["weight"]) for t in migrated["best_pairs"]["traits"]] == [("old", -4)]
+
+    # ...but a payload that already has per-mode traits is authoritative.
+    modern = {"melee": {"traits": [
+        {"category": "mutation", "key": "m", "display": "M", "weight": -6}]}}
+    kept = _normalize_mutation_mode_profiles(modern, legacy_traits=legacy)
+    assert kept["best_pairs"]["traits"] == []

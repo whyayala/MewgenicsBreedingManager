@@ -254,7 +254,16 @@ def _normalize_mutation_mode_profiles(data=None, *, legacy_traits=None) -> dict[
             "traits": _normalize_mutation_traits(raw_profile.get("traits", [])),
             "stat_priority": _normalize_stat_priority(raw_profile.get("stat_priority", []), fallback_mode=mode),
         }
-    if legacy_traits and not normalized["best_pairs"]["traits"]:
+    # legacy_traits migrates PRE-multi-tree payloads, which carry a single
+    # flat trait list and no per-mode profiles. Once any mode has traits the
+    # profiles are authoritative — applying legacy_traits then would copy the
+    # currently-active tree's selections into Best Pairs, because callers
+    # pass the active tree's live list here.
+    has_mode_traits = any(
+        isinstance(source.get(mode), dict) and source[mode].get("traits")
+        for mode in MUTATION_CLASS_MODES
+    )
+    if legacy_traits and not has_mode_traits and not normalized["best_pairs"]["traits"]:
         normalized["best_pairs"]["traits"] = _normalize_mutation_traits(legacy_traits)
     for mode in MUTATION_CLASS_MODES:
         if not normalized[mode]["stat_priority"]:

@@ -320,7 +320,10 @@ class MutationDisorderPlannerView(QWidget):
         return self._selected_mode
 
     def get_mode_profiles(self) -> dict[str, dict]:
-        profiles = _normalize_mutation_mode_profiles(self._mode_profiles, legacy_traits=self._selected_traits)
+        # No legacy_traits here: _selected_traits aliases the active tree's
+        # list, so passing it would leak that tree's selections into
+        # Best Pairs whenever Best Pairs is empty.
+        profiles = _normalize_mutation_mode_profiles(self._mode_profiles)
         has_traits = any(profiles.get(mode, {}).get("traits") for mode in MUTATION_CLASS_MODES)
         if has_traits:
             return profiles
@@ -1390,7 +1393,11 @@ class MutationDisorderPlannerView(QWidget):
             for t in self._selected_traits
             if (t["category"], t["key"]) not in remove_set
         ]
-        self._selected_traits.clear()
+        # Do NOT clear _selected_traits here: it aliases the active tree's
+        # trait list, and _set_selected_traits_from_datas reads the surviving
+        # traits' weights out of it. Clearing first made every remaining
+        # trait fall back to the default +5, silently flipping undesired
+        # (negative) selections to desired.
         if remaining:
             self._set_selected_traits_from_datas(remaining, sync_table=False, clear_combo=True)
         else:
@@ -1399,7 +1406,6 @@ class MutationDisorderPlannerView(QWidget):
             self._refresh_trait_table_name_styles()
             self._refresh_table()
             self._save_session_state()
-            self._notify_traits_changed()
             self._notify_traits_changed()
 
     def _on_remove_trait(self, index: int):
