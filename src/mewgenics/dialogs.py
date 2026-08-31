@@ -815,12 +815,9 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Birth defects have their real names back: \"Cataracts\", \"Blob Legs\", \"Lobster Claw\" — instead of collapsing into generic \"{part} Birth Defect\" rows. Every distinct defect can now be rated individually in Detailed Scoring. Existing defect ratings reset to Undesirable; re-rate the ones you care about.",
-            "Same-name mutations with different effects are now distinguishable: \"Slender (Eyes)\" vs \"Slender (Legs)\" (eleven different mutations shared one name), \"Pop Eyes (+1 Thorns)\" vs \"Pop Eyes (+1 range, +1 reach)\", \"Extra Head (Legs)\" vs \"(Tail)\".",
-            "Fixed class detection for ~50 cats whose saves carry extra trailing data (mostly retired cats) — they showed as classless, and their class stat modifiers were missing from their totals.",
-            "Basic attacks are excluded from rating lists, breeding targets, and inheritance odds everywhere — they come with the class and are never inherited (they were also diluting real abilities' computed inheritance chances).",
-            "Upgraded abilities collate with their base into one trait row, and the tooltip now shows BOTH effects (\"+ Upgraded: ...\") — so traits that only shine when upgraded can be judged fairly.",
-            "Fixed targeting missing-part defects (\"No Ear\") in the Mutation Planner / Room Optimizer — selecting them silently matched no cats.",
+            "Fixed: removing a trait from a tree in the Mutation Planner reset every REMAINING trait in that tree to +5 (desired) — silently wiping undesired (negative) weights. This only happened via the trait table's remove button, not the per-row × button.",
+            "Fixed: traits selected in any tree leaked into the Best Pairs tree whenever Best Pairs was empty, and the leak was saved to disk — so working in Melee or Ranged silently populated Best Pairs.",
+            "Worth a look after updating: weights already overwritten by the first bug can't be recovered, so check your trees for traits sitting at +5 that you meant as undesired, and for entries in Best Pairs you never added.",
         ]
 
         root = QVBoxLayout(self)

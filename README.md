@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.2`
+Current release: `v5.9.3`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -103,6 +103,15 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.3
+
+**Mutation Planner per-tree trait weights.** Two bugs corrupted saved trait selections; update is recommended.
+
+- **Removing a trait reset the surviving traits' weights to +5 (desired)**, silently flipping undesired (negative) selections. The trait table's remove button emptied the active tree's trait list before the rebuild read the survivors' weights out of that same list, so each fell back to the default. Reproduced against a live view: traits at −8 and +7 both became +5 after removing an unrelated third trait. The per-row × button was unaffected.
+- **Traits selected in one tree leaked into Best Pairs.** Whenever Best Pairs was empty, the active tree's selections were copied into it and persisted to the save sidecar — so working in Melee or Ranged silently populated Best Pairs. The code path exists to migrate pre-multi-tree saves and was being handed live data; it is now restricted to genuinely legacy payloads (old flat trait lists still migrate correctly).
+
+Already-overwritten weights cannot be recovered: after updating, check each tree for traits sitting at +5 that you intended as undesired, and Best Pairs for entries you never added.
 
 ### v5.9.2
 
