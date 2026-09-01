@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.3`
+Current release: `v5.9.4`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -103,6 +103,13 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.4
+
+**Performance: Mutation Planner and All Cats.** Both fixes are pure speed — every displayed value is unchanged.
+
+- **Mutation Planner: ~10s → ~0.1s to open.** With traits selected and a previous "Find Best Pairs" run saved, opening the page re-ran the whole multi-trait pair search, and each candidate pair rebuilt the kinship calculation from scratch — 117M operations for ~1,100 pairs on a save with deep (gen 25+) lineages. The view now reuses one ancestry memo across the search. Verified numerically identical across all 4,278 alive pairs in the test save (worst deviation 3.6e-14 on a 0–100 scale, i.e. floating-point ordering only).
+- **All Cats: ~2× faster to switch to** (2.99s → 1.47s on a 2,000-cat save; first switch 2.35s → 1.07s). The table recomputed each cat's exceptional/donation verdict at the top of every `data()` call — which Qt makes once per row × column × role, ~177,000 times per filter switch. Those verdicts are now cached per cat, invalidated by a generation counter whenever thresholds, score source, Detailed scores, or donation planner traits change. The lazily-imported thresholds module is also cached instead of re-running its import on every call (~0.6s per layout by itself).
 
 ### v5.9.3
 
