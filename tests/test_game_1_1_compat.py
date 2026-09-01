@@ -625,3 +625,93 @@ class TestAbilityFamilyCollation:
         # legacy saved key with tier suffix still matches
         assert _cat_has_trait(upgraded, "ability", "pierce2")
         assert not _cat_has_trait(base, "ability", "bearhug")
+
+
+class TestTablePerformanceCaching:
+    """data() is called once per (row, column, role) — Qt sweeps the whole
+    model when sorting/filtering — so the exceptional/donation verdicts must
+    be memoized per cat rather than recomputed per cell."""
+
+    def _model(self, monkeypatch, counter):
+        from mewgenics.models import cat_table_model as ctm
+        real = ctm._is_exceptional_breeder
+
+        def counting(cat):
+            counter.append(1)
+            return real(cat)
+
+        monkeypatch.setattr(ctm, "_is_exceptional_breeder", counting)
+        return ctm.CatTableModel()
+
+    def test_badge_verdicts_computed_once_per_cat(self, monkeypatch):
+        from PySide6.QtCore import Qt
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        cats = cats[:50]
+        calls: list = []
+        model = self._model(monkeypatch, calls)
+        model.load(list(cats))
+        calls.clear()
+        for row in range(model.rowCount()):
+            index = model.index(row, 0)
+            for role in (Qt.DisplayRole, Qt.ToolTipRole, Qt.BackgroundRole,
+                         Qt.ForegroundRole, Qt.UserRole):
+                model.data(index, role)
+        # One computation per cat, not one per (cat, role).
+        assert len(calls) <= len(cats), f"{len(calls)} computations for {len(cats)} cats"
+
+    def test_threshold_change_invalidates_badge_cache(self, monkeypatch):
+        from PySide6.QtCore import Qt
+        from mewgenics.utils import thresholds as th
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        cats = cats[:20]
+        calls: list = []
+        model = self._model(monkeypatch, calls)
+        model.load(list(cats))
+        for row in range(model.rowCount()):
+            model.data(model.index(row, 0), Qt.DisplayRole)
+        before = len(calls)
+        assert before > 0
+
+        th._bump_badge_generation()   # e.g. thresholds edited / Detailed rerun
+        for row in range(model.rowCount()):
+            model.data(model.index(row, 0), Qt.DisplayRole)
+        assert len(calls) > before, "cache must be rebuilt after a generation bump"
+
+    def test_must_breed_suffix_is_not_cached(self):
+        """The must-breed suffix is applied live, so toggling it needs no
+        cache invalidation."""
+        from mewgenics.models.cat_table_model import CatTableModel
+        from mewgenics.utils import thresholds as th
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        model = CatTableModel()
+        model.load(list(cats))
+        # Force a donation candidate by making the floor unreachable.
+        th._apply_threshold_preferences({"donation_sum_threshold": 999,
+                                         "donation_max_top_stat": 99}, cats)
+        try:
+            target = next(c for c in cats if model._donation_reason_for(c))
+            target.must_breed = False
+            assert "Must Breed" not in (model._donation_reason_for(target) or "")
+            target.must_breed = True
+            assert "Must Breed" in (model._donation_reason_for(target) or "")
+        finally:
+            target.must_breed = False
+            th._apply_threshold_preferences({}, cats)
+
+
+class TestKinshipMemoSharing:
+    """risk_percent with a shared memo must match fresh-memo results — the
+    Mutation Planner reuses one memo across its O(n^2) pair search, which
+    took ~10s per open without it."""
+
+    def test_shared_memo_matches_fresh_memo(self):
+        import math
+        from save_parser import risk_percent
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        alive = [c for c in cats if c.status != "Gone"][:40]
+        memo: dict = {}
+        for i, a in enumerate(alive):
+            for b in alive[i + 1:]:
+                shared = risk_percent(a, b, memo)
+                fresh = risk_percent(a, b)
+                assert math.isclose(shared, fresh, rel_tol=1e-9, abs_tol=1e-9), (a.name, b.name, shared, fresh)

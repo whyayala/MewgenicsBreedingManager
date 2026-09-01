@@ -125,6 +125,18 @@ def _save_threshold_preferences(prefs: dict) -> bool:
     return True
 
 
+# Bumped whenever anything that feeds the exceptional/donation verdicts
+# changes (thresholds, score source, Detailed scores, planner traits).
+# Consumers that memoize those verdicts store the generation alongside the
+# cached value and recompute when it moves, so caches cannot go stale.
+BADGE_GENERATION = 0
+
+
+def _bump_badge_generation():
+    global BADGE_GENERATION
+    BADGE_GENERATION += 1
+
+
 def _set_donation_planner_traits(traits: list[dict] | None):
     global _DONATION_PLANNER_TRAITS
     normalized: list[dict] = []
@@ -146,6 +158,7 @@ def _set_donation_planner_traits(traits: list[dict] | None):
             "weight": weight,
         })
     _DONATION_PLANNER_TRAITS = tuple(normalized)
+    _bump_badge_generation()
 
 
 def _donation_planner_traits() -> tuple[dict, ...]:
@@ -179,6 +192,7 @@ def _apply_threshold_preferences(prefs: dict | None = None, cats: list[Cat] | No
     SCORE_SOURCE = str(normalized.get("score_source", "base_sum"))
     DETAILED_EXCEPTIONAL_THRESHOLD = float(normalized.get("detailed_exceptional_threshold", 20.0))
     DETAILED_DONATION_THRESHOLD = float(normalized.get("detailed_donation_threshold", -5.0))
+    _bump_badge_generation()
 
 
 def _set_detailed_scores(scores: dict[int, float] | None):
@@ -188,6 +202,7 @@ def _set_detailed_scores(scores: dict[int, float] | None):
     """
     global _DETAILED_SCORES
     _DETAILED_SCORES = dict(scores or {})
+    _bump_badge_generation()
 
 
 def _get_detailed_score(cat: Cat) -> float | None:

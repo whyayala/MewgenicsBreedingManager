@@ -815,9 +815,9 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Fixed: removing a trait from a tree in the Mutation Planner reset every REMAINING trait in that tree to +5 (desired) — silently wiping undesired (negative) weights. This only happened via the trait table's remove button, not the per-row × button.",
-            "Fixed: traits selected in any tree leaked into the Best Pairs tree whenever Best Pairs was empty, and the leak was saved to disk — so working in Melee or Ranged silently populated Best Pairs.",
-            "Worth a look after updating: weights already overwritten by the first bug can't be recovered, so check your trees for traits sitting at +5 that you meant as undesired, and for entries in Best Pairs you never added.",
+            "The Mutation Planner opens instantly again. If you had traits selected and had run \"Find Best Pairs\", opening the page re-ran that whole search and recomputed every pair's inbreeding risk from scratch — about 10 seconds every time on a save with deep lineages. It now reuses one ancestry calculation: ~0.1 seconds.",
+            "The All Cats page is about twice as fast to switch to. The cat table was recomputing each cat's exceptional/donation status once per cell per redraw — roughly 177,000 times for a single switch on a 2,000-cat save — instead of once per cat.",
+            "Both fixes are pure speed: every displayed number is unchanged (verified pair-by-pair against the previous results).",
         ]
 
         root = QVBoxLayout(self)
