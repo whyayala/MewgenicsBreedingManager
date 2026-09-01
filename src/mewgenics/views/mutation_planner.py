@@ -267,6 +267,12 @@ class MutationDisorderPlannerView(QWidget):
         self._cats: list[Cat] = []
         self._alive_cats: list[Cat] = []
         self._selected_pair: list[Cat] = []
+        # Shared kinship memo for risk_percent/kinship_coi. Kinship depends
+        # only on the pedigree, which is fixed for a given roster, so this is
+        # reused across every pair. Without it each call re-walked the whole
+        # ancestry DAG: the multi-trait pair search took ~10s on a save with
+        # deep (gen 25+) lineages, every time the view was opened.
+        self._kinship_memo: dict = {}
         self._selected_mode = "best_pairs"
         self._mode_profiles: dict[str, dict] = _default_mutation_mode_profiles()
         self._selected_traits: list[dict] = self._mode_profiles[self._selected_mode]["traits"]  # active profile alias
@@ -777,6 +783,7 @@ class MutationDisorderPlannerView(QWidget):
     def set_cats(self, cats: list[Cat]):
         self._cats = cats
         self._alive_cats = [cat for cat in cats if cat.status != "Gone"]
+        self._kinship_memo.clear()
         self._selected_pair.clear()
         self._populate_room_filter()
         self._populate_trait_combo()
@@ -1601,7 +1608,7 @@ class MutationDisorderPlannerView(QWidget):
                     else:
                         uncovered.append(t)
             if covered:  # only show pairs that cover at least one positive trait
-                pair_risk = risk_percent(a, b)
+                pair_risk = risk_percent(a, b, self._kinship_memo)
                 scored_pairs.append((score, a, b, covered, uncovered, penalized, pair_risk))
 
         scored_pairs.sort(key=lambda x: (-x[0], x[6]))  # best score, lowest birth-defect risk
@@ -2032,7 +2039,7 @@ class MutationDisorderPlannerView(QWidget):
             for f in females:
                 if m is f:
                     continue
-                pair_risk = risk_percent(m, f)
+                pair_risk = risk_percent(m, f, self._kinship_memo)
                 note = _tr("mutation_planner.single_trait.note.both_carriers")
                 if pair_risk >= 20:
                     note += f" (birth defect risk {int(round(pair_risk))}%)"
@@ -2079,7 +2086,7 @@ class MutationDisorderPlannerView(QWidget):
                 pair_table.setItem(row, 0, QTableWidgetItem(ca.name))
                 pair_table.setItem(row, 1, QTableWidgetItem(cb.name))
                 pair_table.setItem(row, 2, QTableWidgetItem(note))
-                pair_risk = risk_percent(ca, cb)
+                pair_risk = risk_percent(ca, cb, self._kinship_memo)
                 risk_pct = int(round(pair_risk))
                 inbred_item = QTableWidgetItem(f"{risk_pct}%")
                 inbred_item.setTextAlignment(Qt.AlignCenter)
@@ -2330,7 +2337,7 @@ class MutationDisorderPlannerView(QWidget):
             layout.addWidget(self._info_label(_tr("mutation_planner.pair.no_disorders")))
 
         # Birth defect risk breakdown
-        coi = kinship_coi(cat_a, cat_b)
+        coi = kinship_coi(cat_a, cat_b, self._kinship_memo)
         disorder_ch, part_defect_ch, combined_ch = _malady_breakdown(coi)
         inbred_note = ""
         if cat_a.inbredness is None and cat_b.inbredness is None:

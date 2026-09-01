@@ -29,9 +29,11 @@ from mewgenics.utils.tags import (
     _cat_tag_pixmap, _cat_tag_summary, _cat_tag_tooltip,
 )
 from mewgenics.utils.thresholds import EXCEPTIONAL_SUM_THRESHOLD
+from mewgenics.utils import thresholds as _thresholds_mod
 from mewgenics.utils.cat_analysis import (
     _cat_base_sum, _is_exceptional_breeder,
-    _donation_candidate_reason, _is_donation_candidate, _relations_summary,
+    _donation_candidate_reason, _donation_candidate_base_reason,
+    _is_donation_candidate, _relations_summary,
 )
 from mewgenics.utils.calibration import _trait_label_from_value, _trait_level_color
 from mewgenics.utils.abilities import (
@@ -617,6 +619,14 @@ class CatTableModel(QAbstractTableModel):
         self._visual_mode: bool = False
         self._visual_sprite_size: int = 48
         self._accessible_cat_keys: set[int] = set()
+        # Exceptional/donation verdicts memoized per cat: data() is called
+        # once per (row, column, role), so a filter switch on a 2k-cat save
+        # recomputed them ~180k times (several seconds). Keyed by id(cat)
+        # and stamped with the threshold generation so a threshold, score
+        # source, Detailed score or planner-trait change invalidates them.
+        self._badge_generation: int = -1
+        self._exceptional_cache: dict[int, bool] = {}
+        self._donation_base_cache: dict[int, Optional[str]] = {}
 
     def set_breeding_cache(self, cache):
         self._breeding_cache = cache
@@ -706,6 +716,11 @@ class CatTableModel(QAbstractTableModel):
             self._accessible_cat_keys = set(accessible_cats)
         self._relation_cache.clear()
         self._compat_cache.clear()
+        # id(cat) is only unique among live objects — drop badge verdicts for
+        # the previous roster before ids can be recycled by a new one.
+        self._exceptional_cache.clear()
+        self._donation_base_cache.clear()
+        self._badge_generation = -1
         # Cheap caches — computed inline
         self._parent_ids_cache = {
             id(cat): frozenset(id(parent) for parent in get_parents(cat))
@@ -851,6 +866,63 @@ class CatTableModel(QAbstractTableModel):
         self._compat_cache[key] = compat
         return compat
 
+    def _sync_badge_generation(self):
+        generation = _thresholds_mod.BADGE_GENERATION
+        if self._badge_generation != generation:
+            self._badge_generation = generation
+            self._exceptional_cache.clear()
+            self._donation_base_cache.clear()
+
+    def _exceptional_for(self, cat: Cat) -> bool:
+        self._sync_badge_generation()
+        key = id(cat)
+        cached = self._exceptional_cache.get(key)
+        if cached is None:
+            cached = _is_exceptional_breeder(cat)
+            self._exceptional_cache[key] = cached
+        return cached
+
+    def _donation_reason_for(self, cat: Cat) -> Optional[str]:
+        """Donation reason for *cat*, memoizing only the expensive half.
+
+        The must-breed suffix is applied live so toggling Must Breed needs no
+        cache invalidation.
+        """
+        self._sync_badge_generation()
+        key = id(cat)
+        if key in self._donation_base_cache:
+            base_reason = self._donation_base_cache[key]
+        else:
+            base_reason = _donation_candidate_base_reason(cat)
+            self._donation_base_cache[key] = base_reason
+        if base_reason is None:
+            return None
+        if cat.must_breed:
+            return f"{base_reason} (currently marked Must Breed)"
+        return base_reason
+
+    def _can_adventure(self, cat: Cat) -> bool:
+        """Adv Ready: the cat must be alive, in the house (or currently on an
+        adventure), AND flagged as accessible by the game's own pedigree
+        table. "Gone" covers dead/aged-out cats — those must never show ✓
+        even if a stale entry lingers in the hash table. Retired cats (cats
+        that have already gone on at least one adventure — detected via
+        non-zero stat_mod level-up bonuses) also remain in the accessible
+        hash but cannot be sent out again, so they are filtered out here.
+        """
+        return (
+            cat.status != "Gone"
+            and not cat.has_adventured
+            and cat.db_key in self._accessible_cat_keys
+        )
+
+    def _badge_background(self, cat: Cat) -> Optional[QColor]:
+        if self._exceptional_for(cat):
+            return QColor(24, 78, 48)
+        if self._donation_reason_for(cat) is not None:
+            return QColor(82, 52, 22)
+        return None
+
     def _inbred_score_for(self, cat: Cat) -> int:
         return self._inbred_score_cache.get(id(cat), 0)
 
@@ -892,35 +964,16 @@ class CatTableModel(QAbstractTableModel):
         cat = self._cats[index.row()]
         col = index.column()
         display_stats = cat.total_stats if self._show_total_stats else cat.base_stats
-        is_exceptional = _is_exceptional_breeder(cat)
-        donation_reason = _donation_candidate_reason(cat)
-        is_donation = donation_reason is not None
-        # Adv Ready: the cat must be alive, in the house (or currently on
-        # an adventure), AND flagged as accessible by the game's own
-        # pedigree table. "Gone" covers dead/aged-out cats — those must
-        # never show ✓ even if a stale entry lingers in the hash table.
-        # Retired cats (cats that have already gone on at least one
-        # adventure — detected via non-zero stat_mod level-up bonuses)
-        # also remain in the accessible hash but cannot be sent out
-        # again, so they must be filtered out here.
-        can_adventure = (
-            cat.status != "Gone"
-            and not cat.has_adventured
-            and cat.db_key in self._accessible_cat_keys
-        )
-
-        def _badge_background() -> Optional[QColor]:
-            if is_exceptional:
-                return QColor(24, 78, 48)
-            if is_donation:
-                return QColor(82, 52, 22)
-            return None
+        # Badge verdicts, adventure-readiness and the badge colour are looked
+        # up lazily through cached accessors below. Computing them eagerly
+        # here cost several seconds per All Cats switch, because Qt calls
+        # data() once per (row, column, role) — ~180k times on a 2k-cat save.
 
         if role == Qt.DisplayRole:
             if col == COL_NAME:
-                if is_exceptional:
+                if self._exceptional_for(cat):
                     return f"[EXC] {cat.name}"
-                if is_donation:
+                if (self._donation_reason_for(cat) is not None):
                     return f"[DON] {cat.name}"
                 return cat.name
             if col == COL_TAGS:
@@ -932,7 +985,7 @@ class CatTableModel(QAbstractTableModel):
                 if cat.is_dead:
                     return "Dead"
                 return STATUS_ABBREV.get(cat.status, cat.status)
-            if col == COL_ADV:  return "✓" if can_adventure else "—"
+            if col == COL_ADV:  return "✓" if self._can_adventure(cat) else "—"
             if col == COL_BL:   return "X" if cat.is_blacklisted else ""
             if col == COL_MB:   return "★" if cat.must_breed else ""
             if col == COL_PIN:  return "\u25C6" if cat.is_pinned else ""
@@ -991,7 +1044,7 @@ class CatTableModel(QAbstractTableModel):
             if col == COL_SUM:
                 return sum(display_stats.values())
             if col == COL_ADV:
-                return 0 if can_adventure else 1
+                return 0 if self._can_adventure(cat) else 1
             if col == COL_REL:
                 return self._relation_for(cat) if self._focus_cat is not None else -1.0
             if col == COL_AGE:
@@ -1039,7 +1092,7 @@ class CatTableModel(QAbstractTableModel):
                     return QBrush(QColor(sc.red() // 2, sc.green() // 2, sc.blue() // 2))
                 return QBrush(sc)
             if col == COL_ADV:
-                if can_adventure:
+                if self._can_adventure(cat):
                     return QBrush(QColor(36, 96, 64))
                 return QBrush(QColor(48, 48, 58))
             if col in (COL_AGG, COL_LIB, COL_INBRD):
@@ -1055,7 +1108,7 @@ class CatTableModel(QAbstractTableModel):
                     return QBrush(QColor(base.red() // 2, base.green() // 2, base.blue() // 2))
                 return QBrush(base)
             if col in (COL_NAME, COL_SUM, COL_TAGS):
-                badge = _badge_background()
+                badge = self._badge_background(cat)
                 if badge is not None:
                     if compat == 'incompatible':
                         badge = QColor(badge.red() // 4, badge.green() // 4, badge.blue() // 4)
@@ -1077,17 +1130,17 @@ class CatTableModel(QAbstractTableModel):
             if compat == 'risky':
                 return QBrush(QColor(130, 110, 60))
             if col == COL_ADV:
-                return QBrush(QColor(230, 255, 240)) if can_adventure else QBrush(QColor(150, 160, 170))
+                return QBrush(QColor(230, 255, 240)) if self._can_adventure(cat) else QBrush(QColor(150, 160, 170))
             if col in STAT_COLS or col == COL_STAT or col in (COL_AGG, COL_LIB, COL_INBRD, COL_NAME, COL_SUM, COL_TAGS):
                 return QBrush(QColor(255, 255, 255))
 
         elif role == Qt.ToolTipRole:
             if col == COL_NAME:
                 notes: list[str] = []
-                if is_exceptional:
+                if self._exceptional_for(cat):
                     notes.append(self._exceptional_tooltip(cat))
-                if donation_reason:
-                    notes.append(f"Donation candidate: {donation_reason}")
+                if self._donation_reason_for(cat):
+                    notes.append(f"Donation candidate: {self._donation_reason_for(cat)}")
                 if notes:
                     return "\n".join(notes)
                 return cat.name
@@ -1104,7 +1157,7 @@ class CatTableModel(QAbstractTableModel):
             if col == COL_ROOM:
                 return cat.room
             if col == COL_ADV:
-                if can_adventure:
+                if self._can_adventure(cat):
                     if cat.status == "Adventure":
                         return "Adventure-ready, currently away on adventure."
                     return "Eligible for the next adventure."
@@ -1144,10 +1197,10 @@ class CatTableModel(QAbstractTableModel):
                 notes: list[str] = [f"Base stat sum: {_cat_base_sum(cat)}"]
                 if self._show_total_stats:
                     notes.append(f"Total stat sum: {sum(cat.total_stats.values())}")
-                if is_exceptional:
+                if self._exceptional_for(cat):
                     notes.append(self._exceptional_tooltip(cat, prefix="Exceptional threshold"))
-                if donation_reason:
-                    notes.append(f"Donation signal: {donation_reason}")
+                if self._donation_reason_for(cat):
+                    notes.append(f"Donation signal: {self._donation_reason_for(cat)}")
                 return "\n".join(notes)
 
         elif role == Qt.CheckStateRole:

@@ -12,18 +12,31 @@ def _cat_base_sum(cat: "Cat") -> int:
     return int(sum(cat.base_stats.values()))
 
 
+# mewgenics.utils.thresholds imports this module, so it can only be imported
+# lazily. Cache the MODULE (not its values — the thresholds are mutable
+# globals that must be read fresh): re-running `from ... import a, b, c` on
+# every call cost ~0.6s per table layout on a 2k-cat save, because each one
+# goes through the import machinery.
+_thresholds_module = None
+
+
+def _thresholds():
+    global _thresholds_module
+    if _thresholds_module is None:
+        from mewgenics.utils import thresholds as _module
+        _thresholds_module = _module
+    return _thresholds_module
+
+
 def _is_exceptional_breeder(cat: "Cat") -> bool:
-    from mewgenics.utils.thresholds import (
-        EXCEPTIONAL_SUM_THRESHOLD, SCORE_SOURCE,
-        DETAILED_EXCEPTIONAL_THRESHOLD, _get_detailed_score,
-    )
-    if SCORE_SOURCE == "detailed":
-        score = _get_detailed_score(cat)
+    t = _thresholds()
+    if t.SCORE_SOURCE == "detailed":
+        score = t._get_detailed_score(cat)
         if score is not None:
-            return score >= DETAILED_EXCEPTIONAL_THRESHOLD
+            return score >= t.DETAILED_EXCEPTIONAL_THRESHOLD
         # Fall back to base sum when the Detailed Scoring cache isn't populated
         # yet (e.g. view never opened this session).
-    return _cat_base_sum(cat) >= EXCEPTIONAL_SUM_THRESHOLD
+    return _cat_base_sum(cat) >= t.EXCEPTIONAL_SUM_THRESHOLD
 
 
 def _has_eternal_youth(cat: "Cat") -> bool:
@@ -31,17 +44,17 @@ def _has_eternal_youth(cat: "Cat") -> bool:
 
 
 def _donation_candidate_base_reason(cat: "Cat") -> Optional[str]:
-    from mewgenics.utils.thresholds import (
-        EXCEPTIONAL_SUM_THRESHOLD, DONATION_SUM_THRESHOLD, DONATION_MAX_TOP_STAT,
-        DONATION_MISSING_PLANNER_TRAITS, _donation_planner_traits,
-        SCORE_SOURCE, DETAILED_DONATION_THRESHOLD, _get_detailed_score,
-    )
+    _th = _thresholds()
+    DONATION_SUM_THRESHOLD = _th.DONATION_SUM_THRESHOLD
+    DONATION_MAX_TOP_STAT = _th.DONATION_MAX_TOP_STAT
+    DONATION_MISSING_PLANNER_TRAITS = _th.DONATION_MISSING_PLANNER_TRAITS
+    DETAILED_DONATION_THRESHOLD = _th.DETAILED_DONATION_THRESHOLD
     from mewgenics.utils.abilities import _cat_has_trait
     if _has_eternal_youth(cat):
         return None
 
-    use_detailed = SCORE_SOURCE == "detailed"
-    detailed_score = _get_detailed_score(cat) if use_detailed else None
+    use_detailed = _th.SCORE_SOURCE == "detailed"
+    detailed_score = _th._get_detailed_score(cat) if use_detailed else None
     # If the user picked Detailed but the cache is empty, silently fall back
     # to base-sum so the sidebar never flags every cat at once.
     if use_detailed and detailed_score is None:
@@ -51,7 +64,7 @@ def _donation_candidate_base_reason(cat: "Cat") -> Optional[str]:
     planner_mode = False
     if DONATION_MISSING_PLANNER_TRAITS:
         planner_traits = [
-            t for t in _donation_planner_traits()
+            t for t in _th._donation_planner_traits()
             if t.get("category") in {"mutation", "ability"}
         ]
         if planner_traits:
