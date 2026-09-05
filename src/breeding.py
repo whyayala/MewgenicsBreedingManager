@@ -297,9 +297,23 @@ def game_compatibility(a: Cat, b: Cat, comfort: float = 0.0) -> float:
         # The game multiplies sexuality_mult from the mother's perspective
         return 0.15 * cha * lib * lm * sm_other
 
-    c1 = _compat(a, b)  # a as father, b as mother
-    c2 = _compat(b, a)  # b as father, a as mother
-    return max(c1, c2)
+    # The game's final gate "recalculat[es] compatibility with the father
+    # treated as the initiator", and "'Father' and 'mother' roles are
+    # assigned by gender if possible" (wiki). Since sexuality_mult comes from
+    # the *partner* — the mother — an opposite-sex attempt is gated by the
+    # FEMALE's sexuality. A gay female therefore never conceives with a male,
+    # while a gay male can father kittens with a straight female. Taking the
+    # better of the two role assignments (the old behaviour) wrongly let gay
+    # females breed by pretending they could be the father.
+    if ga == "?" or gb == "?":
+        # "Neutral cats can fill either role" — take the better assignment.
+        return max(_compat(a, b), _compat(b, a))
+    if ga == gb:
+        # "If both cats have the same gender, the roles are chosen randomly."
+        # (Moot for kittens — same-sex pairs produce none; see can_breed.)
+        return max(_compat(a, b), _compat(b, a))
+    father, mother = (a, b) if ga == "male" else (b, a)
+    return _compat(father, mother)
 
 
 def breeding_success_chance(compat: float, comfort: float = 0.0) -> float:

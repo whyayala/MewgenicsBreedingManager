@@ -278,3 +278,37 @@ def test_neutral_gender_ignores_both_orientations():
     # A neutral partner must score at least as well as an equivalent
     # same-sex pairing, which produces no kitten at all.
     assert not can_breed(gay_male, straight_male)[0]
+
+
+def test_opposite_sex_gate_uses_the_female_sexuality():
+    """Wiki: the final gate "recalculat[es] compatibility with the father
+    treated as the initiator", and roles are "assigned by gender if
+    possible" — sexuality_mult comes from the partner (the mother), so an
+    opposite-sex attempt is gated by the FEMALE's sexuality.
+
+    Consequence: a gay female never conceives with a male, while a gay male
+    can father kittens with a straight female.
+    """
+    from breeding import game_compatibility
+
+    gay_female = _make_cat(1, gender="female", sexuality="gay")
+    gay_male = _make_cat(2, gender="male", sexuality="gay")
+    straight_female = _make_cat(3, gender="female", sexuality="straight")
+    straight_male = _make_cat(4, gender="male", sexuality="straight")
+    neutral = _make_cat(5, gender="?", sexuality="straight")
+    # Real saves carry the raw 0..1 coefficient; use decisive values so the
+    # assertion does not hinge on the label-fallback approximation.
+    gay_female.sexuality_raw = 0.98
+    gay_male.sexuality_raw = 0.98
+    straight_female.sexuality_raw = 0.02
+    straight_male.sexuality_raw = 0.02
+
+    # Gay female is the mother -> her orientation blocks the attempt.
+    assert game_compatibility(gay_female, straight_male) < 0.05
+    # ...and the mirrored pairing is far more viable, which is the asymmetry.
+    assert game_compatibility(gay_male, straight_female) > 10 * game_compatibility(gay_female, straight_male)
+    # Gay male is the father -> the straight mother's orientation applies.
+    assert game_compatibility(gay_male, straight_female) >= 0.05
+    # Either can still breed with a neutral cat (multiplier 1).
+    assert game_compatibility(gay_female, neutral) >= 0.05
+    assert game_compatibility(gay_male, neutral) >= 0.05
