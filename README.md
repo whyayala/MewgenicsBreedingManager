@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.4`
+Current release: `v5.9.5`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -44,7 +44,8 @@ Two views for evaluating which cats to keep, breed, or cull:
 - Assigns cats to rooms to maximize breeding outcomes
 - Movement-aware scoring accounts for relocation cost
 - Configurable room capacity, type (breeding/fallback/general), and stimulation
-- Avoids trait loss from high-Evolution or high-Health rooms
+- Protects desired disorders from high-Health rooms, and routes cats with unwanted disorders *into* them to be cured
+- Parks cats with no viable pair in the lowest-stimulation room
 - Routes kittens to fallback rooms until they're old enough to breed
 
 ### Perfect 7 Planner
@@ -103,6 +104,17 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.5
+
+**Breeding-model corrections.** Same-sex mating, gay-cat viability and disorder handling were all modelled incorrectly. Pair recommendations change across every view as a result.
+
+- **Same-sex pairs produce no kitten.** Per the wiki, *"Male-male and Female-female pairs increase the chance of Gay Strays, but do not produce a kitten."* The app scored them as productive breeding pairs with projected offspring stats — 233 such pairs in a real 93-cat house — so the Room Optimizer filled breeding rooms with pairs that can never produce, and the planners could route breeding chains through them. A Gay Stray is a stray with class-derived abilities, not offspring inheriting from those parents. (This reverses upstream's issue #101 "working as intended".)
+- **Opposite-sex attempts are gated by the female's sexuality.** The game's final check recalculates compatibility *"with the father treated as the initiator"*, and roles are *"assigned by gender if possible"* — so the mother's orientation decides. Consequence: a gay female never conceives with a male, while a gay male fathers kittens with a straight female normally. Compatibility previously took the better of the two role assignments, letting gay females breed by pretending they could be the father.
+- **Neutral (ditto) cats ignore both orientations.** *"If either cat in a breeding pair is Neutral, the multiplier is 1."* Only the neutral cat's own multiplier was being cleared, leaving its partner's orientation applied — which under-rated the one pairing that lets a gay cat pass on its traits.
+- **Detailed Scoring: separate "Gay male" and "Gay female" weights.** A single weight would penalise gay males, who are unrestricted breeders. Profiles saved before the split carry their old value onto both keys, so existing setups score identically until changed.
+- **Perfect 7 Planner floor aligned with the optimizer gate** — the two are separate implementations and had begun to disagree about gay males.
+- **Room Optimizer placement:** cats with no viable pair are parked in the lowest-stimulation room (spilling to fallback when full) rather than going straight to fallback; and cats carrying a disorder that no breeding tree rates desirable are routed to the highest-Health room so the Health effect can cure it away. Must Breed cats are exempt, and houses without a Health room are unaffected.
 
 ### v5.9.4
 

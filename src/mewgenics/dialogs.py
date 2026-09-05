@@ -815,9 +815,11 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "The Mutation Planner opens instantly again. If you had traits selected and had run \"Find Best Pairs\", opening the page re-ran that whole search and recomputed every pair's inbreeding risk from scratch — about 10 seconds every time on a save with deep lineages. It now reuses one ancestry calculation: ~0.1 seconds.",
-            "The All Cats page is about twice as fast to switch to. The cat table was recomputing each cat's exceptional/donation status once per cell per redraw — roughly 177,000 times for a single switch on a 2,000-cat save — instead of once per cat.",
-            "Both fixes are pure speed: every displayed number is unchanged (verified pair-by-pair against the previous results).",
+            "Big breeding correction: same-sex pairs mate but produce NO kitten — they raise the Gay Stray chance instead. The app used to score them as productive breeding pairs (233 of them in a real 93-cat house), so the Room Optimizer would fill breeding rooms with pairs that can never produce and the planners could route breeding chains through them.",
+            "Gay females and gay males are not equivalent breeding stock. Every opposite-sex attempt is gated by the mother's sexuality, so a gay female can only produce kittens with a neutral (ditto) cat, while a gay male fathers kittens with straight females normally. Detailed Scoring now has separate \"Gay male\" and \"Gay female\" weights — existing profiles keep their old value on both until you change them.",
+            "Neutral (ditto) cats now correctly ignore BOTH cats' orientations, which is what makes them a gay cat's only productive partner.",
+            "Room Optimizer placement: cats with no viable pair are parked in the lowest-stimulation room instead of the fallback, and cats carrying a disorder that no breeding tree wants now go to the highest-Health room so the Health effect can cure it away (Must Breed cats are left alone).",
+            "Your pair recommendations will shift after this update — that is expected, and the reasons above are why.",
         ]
 
         root = QVBoxLayout(self)
