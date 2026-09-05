@@ -305,3 +305,62 @@ def test_filter_score():
     fs.score_op = "Greater Than"
     assert cat_passes_filter(_scope_cat("A"), fs, _dummy_score(total=8.0), set()) is True
     assert cat_passes_filter(_scope_cat("B"), fs, _dummy_score(total=3.0), set()) is False
+
+
+def test_gay_male_and_female_weighted_separately():
+    """Gay males father kittens with straight females normally, while gay
+    females can only breed with a neutral cat — so penalising restricted
+    breeders must not also demote gay males."""
+    from mewgenics.scoring.engine import compute_breed_priority_score, BREED_PRIORITY_WEIGHTS
+
+    weights = dict(BREED_PRIORITY_WEIGHTS)
+    weights["gay_female_pref"] = -8.0
+    weights["gay_pref"] = 0.0
+
+    _scope_fields = dict(
+        abilities=[], passive_abilities=[], disorders=[], mutations=[], defects=[],
+        aggression=0.5, libido=0.5, age=3, lovers=[], haters=[],
+        parent_a=None, parent_b=None, is_blacklisted=False, must_breed=False,
+    )
+    gay_male = _make_cat(db_key=1, gender="male", sexuality="gay", **_scope_fields)
+    gay_female = _make_cat(db_key=2, gender="female", sexuality="gay", **_scope_fields)
+    scope = [gay_male, gay_female]
+
+    male_res = compute_breed_priority_score(
+        gay_male, scope_cats=scope, ma_ratings={},
+        stat_names=["STR", "DEX", "CON", "INT", "SPD", "CHA", "LCK"], weights=weights)
+    female_res = compute_breed_priority_score(
+        gay_female, scope_cats=scope, ma_ratings={},
+        stat_names=["STR", "DEX", "CON", "INT", "SPD", "CHA", "LCK"], weights=weights)
+
+    assert male_res.subtotals.get("gay_female_pref", 0.0) == 0.0
+    assert female_res.subtotals.get("gay_female_pref") == -8.0
+    assert female_res.total < male_res.total
+
+
+def test_gay_pref_only_applies_to_males():
+    from mewgenics.scoring.engine import compute_breed_priority_score, BREED_PRIORITY_WEIGHTS
+
+    weights = dict(BREED_PRIORITY_WEIGHTS)
+    weights["gay_pref"] = -5.0
+    weights["gay_female_pref"] = 0.0
+
+    _scope_fields = dict(
+        abilities=[], passive_abilities=[], disorders=[], mutations=[], defects=[],
+        aggression=0.5, libido=0.5, age=3, lovers=[], haters=[],
+        parent_a=None, parent_b=None, is_blacklisted=False, must_breed=False,
+    )
+    gay_male = _make_cat(db_key=1, gender="male", sexuality="gay", **_scope_fields)
+    gay_female = _make_cat(db_key=2, gender="female", sexuality="gay", **_scope_fields)
+    scope = [gay_male, gay_female]
+
+    male_res = compute_breed_priority_score(
+        gay_male, scope_cats=scope, ma_ratings={},
+        stat_names=["STR", "DEX", "CON", "INT", "SPD", "CHA", "LCK"], weights=weights)
+    female_res = compute_breed_priority_score(
+        gay_female, scope_cats=scope, ma_ratings={},
+        stat_names=["STR", "DEX", "CON", "INT", "SPD", "CHA", "LCK"], weights=weights)
+
+    assert male_res.subtotals.get("gay_pref") == -5.0
+    assert female_res.subtotals.get("gay_pref", 0.0) == 0.0
+    assert male_res.total < female_res.total

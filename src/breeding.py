@@ -157,13 +157,23 @@ def estimate_breeding_compatibility(initiator: Cat, partner: Cat) -> float:
 def pair_breeding_compatibility(a: Cat, b: Cat) -> float:
     """Symmetric compatibility estimate for a pair.
 
-    Returns the *worst-direction* compat so the planner filter matches
-    "this pair reliably produces kittens regardless of who initiates".
-    The game picks a random initiator each day and same-sex pairs see
-    wildly asymmetric sex_mult values when the two cats have different
-    sexuality coefficients — using max would let those pairs slip past
-    a floor even though half of initiations would fail.
+    Mirrors the game's final gate, which recalculates compatibility "with
+    the father treated as the initiator" after assigning father/mother roles
+    by gender. For an opposite-sex pair that role assignment is fixed, so the
+    attempt is gated by the female's sexuality — the same rule
+    ``game_compatibility`` applies, keeping the planner's floor consistent
+    with the optimizer.
+
+    When roles are not fixed by gender (a neutral cat can fill either role;
+    same-sex roles are chosen randomly) fall back to the *worst* direction,
+    so a pair only clears a planner floor if it breeds regardless of who
+    initiates.
     """
+    ga = (a.gender or "?").strip().lower()
+    gb = (b.gender or "?").strip().lower()
+    if ga != gb and ga in ("male", "female") and gb in ("male", "female"):
+        father, mother = (a, b) if ga == "male" else (b, a)
+        return estimate_breeding_compatibility(father, mother)
     return min(
         estimate_breeding_compatibility(a, b),
         estimate_breeding_compatibility(b, a),
@@ -260,11 +270,15 @@ def game_compatibility(a: Cat, b: Cat, comfort: float = 0.0) -> float:
     ga = (getattr(a, "gender", "?") or "?").strip().lower()
     gb = (getattr(b, "gender", "?") or "?").strip().lower()
 
-    # ? gender cats: sexuality multiplier is 1.0 (no effect)
+    # Neutral ("?") gender: per the wiki, "If either cat in a breeding pair
+    # is Neutral, the multiplier is 1" — BOTH sides, so the partner's
+    # orientation is ignored entirely. A neutral cat therefore breeds at full
+    # compatibility with a gay cat, which is the gay cat's only productive
+    # path (same-sex pairs mate but yield no kitten).
     if ga == "?" or gb == "?":
-        same_sex = False  # neutral, sexuality_mult = 1.0 for ? cats
-        sex_mult_a = 1.0 if ga == "?" else _sexuality_mult(a, same_sex)
-        sex_mult_b = 1.0 if gb == "?" else _sexuality_mult(b, same_sex)
+        same_sex = False
+        sex_mult_a = 1.0
+        sex_mult_b = 1.0
     else:
         same_sex = ga == gb
         sex_mult_a = _sexuality_mult(a, same_sex)
@@ -293,9 +307,23 @@ def game_compatibility(a: Cat, b: Cat, comfort: float = 0.0) -> float:
         # The game multiplies sexuality_mult from the mother's perspective
         return 0.15 * cha * lib * lm * sm_other
 
-    c1 = _compat(a, b)  # a as father, b as mother
-    c2 = _compat(b, a)  # b as father, a as mother
-    return max(c1, c2)
+    # The game's final gate "recalculat[es] compatibility with the father
+    # treated as the initiator", and "'Father' and 'mother' roles are
+    # assigned by gender if possible" (wiki). Since sexuality_mult comes from
+    # the *partner* — the mother — an opposite-sex attempt is gated by the
+    # FEMALE's sexuality. A gay female therefore never conceives with a male,
+    # while a gay male can father kittens with a straight female. Taking the
+    # better of the two role assignments (the old behaviour) wrongly let gay
+    # females breed by pretending they could be the father.
+    if ga == "?" or gb == "?":
+        # "Neutral cats can fill either role" — take the better assignment.
+        return max(_compat(a, b), _compat(b, a))
+    if ga == gb:
+        # "If both cats have the same gender, the roles are chosen randomly."
+        # (Moot for kittens — same-sex pairs produce none; see can_breed.)
+        return max(_compat(a, b), _compat(b, a))
+    father, mother = (a, b) if ga == "male" else (b, a)
+    return _compat(father, mother)
 
 
 def breeding_success_chance(compat: float, comfort: float = 0.0) -> float:

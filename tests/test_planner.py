@@ -70,7 +70,9 @@ def test_pair_projection_supports_dict_style_access():
     assert len(projection["expected_stats"]) == len(STAT_NAMES)
 
 
-def test_score_pair_allows_same_sex_bi_pairs_and_blocks_direct_family():
+def test_score_pair_rejects_same_sex_pairs_and_blocks_direct_family():
+    """Same-sex pairs mate but produce no kitten, so they must never be
+    scored as viable breeding pairs."""
     cat_a = _make_cat(1, gender="male", sexuality="bi")
     cat_b = _make_cat(2, gender="male", sexuality="bi")
 
@@ -81,16 +83,28 @@ def test_score_pair_allows_same_sex_bi_pairs_and_blocks_direct_family():
         lover_key_map={1: set(), 2: set()},
         avoid_lovers=False,
     )
-    assert factors.compatible
-    assert factors.quality >= 0.0
+    assert not factors.compatible
+    assert "no kitten" in factors.reason.lower()
+
+    # Opposite-sex bi pair is still fine.
+    cat_c = _make_cat(3, gender="female", sexuality="bi")
+    opposite = score_pair(
+        cat_a,
+        cat_c,
+        hater_key_map={1: set(), 3: set()},
+        lover_key_map={1: set(), 3: set()},
+        avoid_lovers=False,
+    )
+    assert opposite.compatible
+    assert opposite.quality >= 0.0
 
     direct_family = score_pair(
         cat_a,
-        cat_b,
-        hater_key_map={1: set(), 2: set()},
-        lover_key_map={1: set(), 2: set()},
+        cat_c,
+        hater_key_map={1: set(), 3: set()},
+        lover_key_map={1: set(), 3: set()},
         avoid_lovers=False,
-        parent_key_map={1: set(), 2: {1}},
+        parent_key_map={1: set(), 3: {1}},
     )
     assert not direct_family.compatible
     assert "Direct family" in direct_family.reason
@@ -158,7 +172,8 @@ def test_planner_pair_bias_prefers_opposite_or_unknown_gender_pairs():
 
     assert planner_pair_allows_breeding(male, female)
     assert planner_pair_allows_breeding(male, unknown)
-    assert planner_pair_allows_breeding(gay_male_a, gay_male_b)
+    # Same-sex pairs mate but produce no kitten — orientation doesn't change that.
+    assert not planner_pair_allows_breeding(gay_male_a, gay_male_b)
     assert not planner_pair_allows_breeding(male, male)
 
     assert planner_pair_bias(male, female) > planner_pair_bias(male, male)
@@ -239,3 +254,87 @@ def test_score_pair_trait_bonus_includes_birth_defects():
     )
 
     assert factors.trait_bonus == 5.0
+
+
+def test_neutral_gender_ignores_both_orientations():
+    """Wiki: "If either cat in a breeding pair is Neutral, the multiplier is
+    1" — both sides, so a neutral cat breeds at full compatibility with a gay
+    cat. That is a gay cat's only productive path, since same-sex pairs mate
+    but produce no kitten."""
+    from breeding import game_compatibility
+    from save_parser import can_breed
+
+    gay_female = _make_cat(1, gender="female", sexuality="gay")
+    gay_male = _make_cat(2, gender="male", sexuality="gay")
+    neutral = _make_cat(3, gender="?", sexuality="straight")
+    straight_male = _make_cat(4, gender="male", sexuality="straight")
+
+    # Neutral pairing is viable for gay cats of either gender.
+    assert can_breed(gay_female, neutral)[0]
+    assert can_breed(gay_male, neutral)[0]
+    assert game_compatibility(gay_female, neutral) > 0.05
+    assert game_compatibility(gay_male, neutral) > 0.05
+
+    # A neutral partner must score at least as well as an equivalent
+    # same-sex pairing, which produces no kitten at all.
+    assert not can_breed(gay_male, straight_male)[0]
+
+
+def test_opposite_sex_gate_uses_the_female_sexuality():
+    """Wiki: the final gate "recalculat[es] compatibility with the father
+    treated as the initiator", and roles are "assigned by gender if
+    possible" — sexuality_mult comes from the partner (the mother), so an
+    opposite-sex attempt is gated by the FEMALE's sexuality.
+
+    Consequence: a gay female never conceives with a male, while a gay male
+    can father kittens with a straight female.
+    """
+    from breeding import game_compatibility
+
+    gay_female = _make_cat(1, gender="female", sexuality="gay")
+    gay_male = _make_cat(2, gender="male", sexuality="gay")
+    straight_female = _make_cat(3, gender="female", sexuality="straight")
+    straight_male = _make_cat(4, gender="male", sexuality="straight")
+    neutral = _make_cat(5, gender="?", sexuality="straight")
+    # Real saves carry the raw 0..1 coefficient; use decisive values so the
+    # assertion does not hinge on the label-fallback approximation.
+    gay_female.sexuality_raw = 0.98
+    gay_male.sexuality_raw = 0.98
+    straight_female.sexuality_raw = 0.02
+    straight_male.sexuality_raw = 0.02
+
+    # Gay female is the mother -> her orientation blocks the attempt.
+    assert game_compatibility(gay_female, straight_male) < 0.05
+    # ...and the mirrored pairing is far more viable, which is the asymmetry.
+    assert game_compatibility(gay_male, straight_female) > 10 * game_compatibility(gay_female, straight_male)
+    # Gay male is the father -> the straight mother's orientation applies.
+    assert game_compatibility(gay_male, straight_female) >= 0.05
+    # Either can still breed with a neutral cat (multiplier 1).
+    assert game_compatibility(gay_female, neutral) >= 0.05
+    assert game_compatibility(gay_male, neutral) >= 0.05
+
+
+def test_planner_floor_agrees_with_optimizer_gate_on_sexuality():
+    """The Perfect 7 Planner's compatibility floor and the optimizer's gate
+    are separate implementations — they must agree on who can breed."""
+    from breeding import game_compatibility, pair_breeding_compatibility
+
+    gay_female = _make_cat(1, gender="female", sexuality="gay")
+    gay_male = _make_cat(2, gender="male", sexuality="gay")
+    straight_female = _make_cat(3, gender="female", sexuality="straight")
+    straight_male = _make_cat(4, gender="male", sexuality="straight")
+    neutral = _make_cat(5, gender="?", sexuality="straight")
+    for cat, raw in ((gay_female, 0.98), (gay_male, 0.98),
+                     (straight_female, 0.02), (straight_male, 0.02)):
+        cat.sexuality_raw = raw
+
+    for left, right in (
+        (gay_female, straight_male),
+        (gay_male, straight_female),
+        (gay_female, neutral),
+        (gay_male, neutral),
+        (straight_female, straight_male),
+    ):
+        optimizer_ok = game_compatibility(left, right) >= 0.05
+        planner_ok = pair_breeding_compatibility(left, right) >= 0.05
+        assert optimizer_ok == planner_ok, (left.name, right.name)

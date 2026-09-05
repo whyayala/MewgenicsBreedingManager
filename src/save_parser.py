@@ -2599,14 +2599,21 @@ def get_grandparents(cat: Cat) -> list[Cat]:
 def can_breed(a: Cat, b: Cat) -> tuple[bool, str]:
     """Return (ok, reason). reason is non-empty only when ok is False.
 
-    Game rule (per wiki): compatibility = 0.15 * charisma * libido * lover_mult * sexuality_mult
-    where sexuality_mult = cos(0.5*pi*sexuality_coeff) for opposite-sex pairs
-    and sin(0.5*pi*sexuality_coeff) for same-sex pairs.  A breeding attempt
-    succeeds when compatibility > 0.05.
+    "Can breed" means "can produce a kitten", which is what every caller
+    (room optimizer, planners, pair browsers) actually needs.
 
-    So a "straight" cat (coeff ~0) has sin ~0 → same-sex compatibility ~0 →
-    hard block.  A bi/gay cat has non-trivial sin and *can* produce offspring
-    with a same-sex partner.  Symmetric rule for gay+gay opposite-sex.
+    Game rule (per wiki): compatibility = 0.15 * charisma * libido * lover_mult
+    * sexuality_mult, where sexuality_mult = cos(0.5*pi*sexuality_coeff) for
+    opposite-sex pairs and sin(0.5*pi*sexuality_coeff) for same-sex pairs. A
+    mating attempt succeeds when compatibility > 0.05.
+
+    Crucially, a successful *mating* is not the same as a kitten: per the
+    wiki, "Male-male and Female-female pairs increase the chance of Gay
+    Strays, but do not produce a kitten." So same-sex pairs are rejected here
+    however high their compatibility — the Gay Stray they may attract is a
+    stray with class-derived abilities, not offspring that inherits from
+    these parents. Pairs involving a neutral-gender ("?") cat are not
+    same-sex and still produce kittens normally.
     """
     if a is b:
         return False, "Cannot pair a cat with itself"
@@ -2616,17 +2623,8 @@ def can_breed(a: Cat, b: Cat) -> tuple[bool, str]:
     if ga == "?" or gb == "?":
         return True, ""
 
-    same_gender = ga == gb
-    if same_gender:
-        sa = (getattr(a, "sexuality", None) or "straight").lower()
-        sb = (getattr(b, "sexuality", None) or "straight").lower()
-        if sa == "straight" and sb == "straight":
-            return False, f"Both cats are straight — very low same-sex compatibility"
-        if sa == "straight":
-            return True, f"{a.name} is straight — very low same-sex compatibility"
-        if sb == "straight":
-            return True, f"{b.name} is straight — very low same-sex compatibility"
-        return True, ""
+    if ga == gb:
+        return False, "Same-sex pair — mates but produces no kitten (raises Gay Stray chance)"
 
     # Opposite-sex pair
     sa = (getattr(a, "sexuality", None) or "straight").lower()

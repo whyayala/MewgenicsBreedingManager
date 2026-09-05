@@ -33,6 +33,7 @@ BREED_PRIORITY_WEIGHTS: dict[str, float] = {
     "high_aggression": -1.0,
     "low_libido":      -0.5,
     "gay_pref":        0.0,
+    "gay_female_pref": 0.0,
     "bi_pref":         0.0,
     "no_children":           -2.0,
     "zero_risk_bonus":        2.0,
@@ -62,7 +63,8 @@ WEIGHT_TOOLTIPS: dict[str, str] = {
     "seven_sub":             "Penalty when a cat's set of 7-stats is strictly dominated\nby another scope cat (the other has all the same 7s and more).",
     "seven_sub_threshold":   "How many dominating cats it takes to reach the full 7-Sub penalty.\nPartial penalty below this count.",
     "cha_low":               "Penalty for low CHA. CHA=4 gets 1x weight, CHA 3 or below gets 2x.\nCHA affects breeding compatibility chance.",
-    "gay_pref":              "Score adjustment for gay cats.\nPositive = prefer, negative = penalize, 0 = ignore.",
+    "gay_pref":              "Score adjustment for gay MALES.\nThey father kittens with straight females normally,\nso they are not breeding-restricted.\nPositive = prefer, negative = penalize, 0 = ignore.",
+    "gay_female_pref":       "Score adjustment for gay FEMALES.\nThe mother's sexuality gates every opposite-sex attempt,\nso they can only produce kittens with a neutral (ditto) cat.\nPositive = prefer, negative = penalize, 0 = ignore.",
     "bi_pref":               "Score adjustment for bi cats.\nPositive = prefer, negative = penalize, 0 = ignore.",
     "high_libido":           "Bonus for cats with high libido (>= 0.7).\nHigh libido increases breeding success chance.",
     "low_libido":            "Penalty for cats with low libido (< 0.3).\nLow libido decreases breeding success chance.",
@@ -99,7 +101,8 @@ WEIGHT_UI_ROWS: list[tuple[str | None, str | tuple | None]] = [
     (None, None),
     ("cha_low",            "CHA \u2264 4 penalty"),
     (None, None),
-    ("gay_pref",         ("Sex", "Gay")),
+    ("gay_pref",         ("Sex", "Gay \u2642")),
+    ("gay_female_pref",  ("",       "Gay \u2640")),
     ("bi_pref",          ("",       "Bi")),
     (None, None),
     ("high_libido",      ("Lib", "High")),
@@ -135,7 +138,7 @@ SCORE_COLUMNS: list[tuple[str, list[str]]] = [
     ("7cnt",  ["stat_7_count"]),
     ("7sub",  ["seven_sub"]),
     ("CHA",   ["cha_low"]),
-    ("Sex",   ["gay_pref", "bi_pref"]),
+    ("Sex",   ["gay_pref", "gay_female_pref", "bi_pref"]),
     ("Lib",   ["high_libido", "low_libido"]),
     ("Gender", ["unknown_gender"]),
     ("Gene",  ["no_children", "zero_risk_bonus"]),
@@ -366,9 +369,19 @@ def compute_breed_priority_score(
         subtotals["high_libido"] = _w["high_libido"]
 
     _sex = getattr(cat, 'sexuality', 'straight') or 'straight'
-    if _sex == 'gay' and _w.get("gay_pref", 0.0) != 0.0:
-        breakdown.append(("Gay", _w["gay_pref"]))
-        subtotals["gay_pref"] = _w["gay_pref"]
+    if _sex == 'gay':
+        # Gay males and gay females are NOT equivalent breeding stock. The
+        # mother's sexuality gates every opposite-sex attempt, so a gay
+        # female can only produce kittens with a neutral (ditto) cat, while
+        # a gay male fathers kittens with straight females normally. Weight
+        # them separately so penalising restricted breeders doesn't also
+        # demote perfectly productive gay males.
+        _gender = (getattr(cat, 'gender', '') or '').strip().lower()
+        _gay_key = "gay_female_pref" if _gender == "female" else "gay_pref"
+        _gay_label = "Gay \u2640" if _gender == "female" else "Gay \u2642"
+        if _w.get(_gay_key, 0.0) != 0.0:
+            breakdown.append((_gay_label, _w[_gay_key]))
+            subtotals[_gay_key] = _w[_gay_key]
     elif _sex == 'bi' and _w.get("bi_pref", 0.0) != 0.0:
         breakdown.append(("Bi", _w["bi_pref"]))
         subtotals["bi_pref"] = _w["bi_pref"]
