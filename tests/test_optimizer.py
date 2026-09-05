@@ -778,3 +778,80 @@ def test_unpairable_cat_goes_to_lowest_stim_room_then_fallback():
     placements = {key: _room_for_cat(result, key) for key in (3, 4)}
     # One fits the single lowest-stim slot; the other overflows to fallback.
     assert sorted(placements.values()) == ["Attic", "Floor2_Large"]
+
+
+_ALL_TREES = ("best_pairs", "melee", "ranged", "magic")
+
+
+def _profiles_rating(disorder: str, weight: float, modes=_ALL_TREES) -> dict:
+    return {
+        mode: {
+            "traits": [{"category": "disorder", "key": disorder,
+                        "weight": weight, "display": disorder}],
+            "stat_priority": list(STAT_NAMES),
+        }
+        for mode in modes
+    }
+
+
+def _cure_rooms():
+    return [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 1, 10.0, health=0.0),
+        RoomConfig("Floor2_Large", RoomType.BREEDING, 1, 80.0, health=70.0),  # highest Health
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0),
+    ]
+
+
+def _run_cure(cats, profiles, **param_kwargs):
+    params = OptimizationParams(
+        max_risk=100.0, avoid_lovers=False, use_sa=False,
+        mode_profiles=profiles, **param_kwargs,
+    )
+    return optimize_room_distribution(cats, _cure_rooms(), params,
+                                      cache=None, excluded_keys=set())
+
+
+def test_universally_undesired_disorder_routed_to_highest_health_room():
+    """A disorder no tree wants should send the cat to the highest-Health
+    room (which can cure it) rather than the fallback."""
+    sick = _make_cat(1, gender="male", sexuality="gay", disorders=["sociopathy"])
+    result = _run_cure([sick], _profiles_rating("sociopathy", -6))
+    assert _room_for_cat(result, 1) == "Floor2_Large"
+
+
+def test_must_breed_cat_is_not_parked_for_curing():
+    """Must Breed means the user wants it breeding, not parked in a
+    Health room."""
+    sick = _make_cat(1, gender="male", sexuality="gay",
+                     disorders=["sociopathy"], must_breed=True)
+    result = _run_cure([sick], _profiles_rating("sociopathy", -6))
+    assert _room_for_cat(result, 1) != "Floor2_Large"
+
+
+def test_disorder_desired_by_any_tree_is_not_cured():
+    """If even one tree rates the disorder desirable, it must be preserved."""
+    profiles = _profiles_rating("sociopathy", -6)
+    profiles["magic"]["traits"][0]["weight"] = 8  # one tree wants it
+    sick = _make_cat(1, gender="male", sexuality="gay", disorders=["sociopathy"])
+    result = _run_cure([sick], profiles)
+    assert _room_for_cat(result, 1) != "Floor2_Large"
+
+
+def test_universally_undesired_helper_semantics():
+    from types import SimpleNamespace
+    cat = SimpleNamespace(disorders=["Sociopathy", "Rabies"])
+
+    unwanted = _profiles_rating("sociopathy", -6)
+    assert room_optimizer_impl._universally_undesired_disorders(cat, unwanted) == ["sociopathy"]
+
+    # Rated desirable somewhere -> not universally undesired.
+    mixed = _profiles_rating("sociopathy", -6)
+    mixed["ranged"]["traits"][0]["weight"] = 3
+    assert room_optimizer_impl._universally_undesired_disorders(cat, mixed) == []
+
+    # Unrated disorders never qualify.
+    assert room_optimizer_impl._universally_undesired_disorders(cat, {}) == []
+
+    # Planner-style "name|id" keys match the bare disorder name.
+    suffixed = _profiles_rating("sociopathy|42", -6)
+    assert room_optimizer_impl._universally_undesired_disorders(cat, suffixed) == ["sociopathy"]

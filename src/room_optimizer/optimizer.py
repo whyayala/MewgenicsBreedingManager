@@ -100,6 +100,47 @@ def _trait_loss_penalty(
     return penalty
 
 
+def _universally_undesired_disorders(cat: Cat, mode_profiles: dict[str, dict]) -> list[str]:
+    """Return the cat's disorders that no breeding tree wants.
+
+    A disorder qualifies when it is rated Undesirable (negative weight) in at
+    least one tree and is never rated desirable (positive weight) in any
+    tree — i.e. there is no configured strategy under which keeping it is an
+    advantage. Trees that simply do not mention it are treated as neutral, so
+    the rule still works when only some trees are configured.
+    """
+    if not mode_profiles:
+        return []
+
+    def _name_only(raw: str) -> str:
+        return str(raw or "").split("|", 1)[0].strip().lower()
+
+    cat_disorders = {_name_only(d) for d in (getattr(cat, "disorders", None) or [])}
+    if not cat_disorders:
+        return []
+
+    negative: set[str] = set()
+    positive: set[str] = set()
+    for profile in mode_profiles.values():
+        for trait in (profile or {}).get("traits", []) or []:
+            if not isinstance(trait, dict):
+                continue
+            if str(trait.get("category") or "").strip().lower() != "disorder":
+                continue
+            key = _name_only(trait.get("key"))
+            if not key or key not in cat_disorders:
+                continue
+            try:
+                weight = float(trait.get("weight", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if weight < 0:
+                negative.add(key)
+            elif weight > 0:
+                positive.add(key)
+    return sorted(negative - positive)
+
+
 def _filter_cats(cats: list[Cat], excluded_keys: set[int], min_stats: int) -> list[Cat]:
     return [
         c
@@ -1012,9 +1053,26 @@ def optimize_room_distribution(
             (room for room in room_configs if room.room_type.uses_profile),
             key=lambda room: (float(room.base_stim or 0.0), room.key),
         )
+        # Cats carrying a disorder that no tree wants are better off in the
+        # highest-Health room, where the Health effect can cure it away —
+        # unless they are marked Must Breed, in which case the user wants
+        # them breeding rather than parked. Rooms with no Health effect
+        # cannot cure anything, so they are not candidates.
+        _profiles = _normalized_mode_profiles(params)
+        healing_rooms = sorted(
+            (room for room in room_configs if float(getattr(room, "health", 0.0) or 0.0) > 0.0),
+            key=lambda room: (-float(room.health or 0.0), room.key),
+        )
         for i, cat in enumerate(unassigned):
+            preferred: list[RoomConfig] = []
+            if (
+                healing_rooms
+                and not getattr(cat, "must_breed", False)
+                and _universally_undesired_disorders(cat, _profiles)
+            ):
+                preferred = healing_rooms
             placed_quiet = False
-            for room in quiet_rooms:
+            for room in (*preferred, *quiet_rooms):
                 if _can_fit_single(room, room_effective_counts[room.key], cat):
                     room_assignments[room.key].append(cat)
                     room_effective_counts[room.key] += 1
