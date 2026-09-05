@@ -260,11 +260,15 @@ def game_compatibility(a: Cat, b: Cat, comfort: float = 0.0) -> float:
     ga = (getattr(a, "gender", "?") or "?").strip().lower()
     gb = (getattr(b, "gender", "?") or "?").strip().lower()
 
-    # ? gender cats: sexuality multiplier is 1.0 (no effect)
+    # Neutral ("?") gender: per the wiki, "If either cat in a breeding pair
+    # is Neutral, the multiplier is 1" — BOTH sides, so the partner's
+    # orientation is ignored entirely. A neutral cat therefore breeds at full
+    # compatibility with a gay cat, which is the gay cat's only productive
+    # path (same-sex pairs mate but yield no kitten).
     if ga == "?" or gb == "?":
-        same_sex = False  # neutral, sexuality_mult = 1.0 for ? cats
-        sex_mult_a = 1.0 if ga == "?" else _sexuality_mult(a, same_sex)
-        sex_mult_b = 1.0 if gb == "?" else _sexuality_mult(b, same_sex)
+        same_sex = False
+        sex_mult_a = 1.0
+        sex_mult_b = 1.0
     else:
         same_sex = ga == gb
         sex_mult_a = _sexuality_mult(a, same_sex)

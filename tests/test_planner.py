@@ -254,3 +254,27 @@ def test_score_pair_trait_bonus_includes_birth_defects():
     )
 
     assert factors.trait_bonus == 5.0
+
+
+def test_neutral_gender_ignores_both_orientations():
+    """Wiki: "If either cat in a breeding pair is Neutral, the multiplier is
+    1" — both sides, so a neutral cat breeds at full compatibility with a gay
+    cat. That is a gay cat's only productive path, since same-sex pairs mate
+    but produce no kitten."""
+    from breeding import game_compatibility
+    from save_parser import can_breed
+
+    gay_female = _make_cat(1, gender="female", sexuality="gay")
+    gay_male = _make_cat(2, gender="male", sexuality="gay")
+    neutral = _make_cat(3, gender="?", sexuality="straight")
+    straight_male = _make_cat(4, gender="male", sexuality="straight")
+
+    # Neutral pairing is viable for gay cats of either gender.
+    assert can_breed(gay_female, neutral)[0]
+    assert can_breed(gay_male, neutral)[0]
+    assert game_compatibility(gay_female, neutral) > 0.05
+    assert game_compatibility(gay_male, neutral) > 0.05
+
+    # A neutral partner must score at least as well as an equivalent
+    # same-sex pairing, which produces no kitten at all.
+    assert not can_breed(gay_male, straight_male)[0]
