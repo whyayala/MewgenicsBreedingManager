@@ -100,7 +100,9 @@ def test_build_room_configs_uses_capacity_and_room_stimulation():
     assert best_breeding_room_stimulation(configs) == 17.0
 
 
-def test_optimize_room_distribution_finds_same_sex_pair():
+def test_optimize_room_distribution_rejects_same_sex_pair():
+    """Same-sex pairs mate but produce no kitten, so the optimizer must not
+    pair them even when both are marked Must Breed."""
     cat_a = _make_cat(1, gender="male", sexuality="bi", must_breed=True, stat_seed=8)
     cat_b = _make_cat(2, gender="male", sexuality="bi", must_breed=True, stat_seed=8)
     cat_c = _make_cat(3, gender="female", sexuality="straight", stat_seed=4)
@@ -123,8 +125,7 @@ def test_optimize_room_distribution_finds_same_sex_pair():
         for pair in assignment.pairs
     }
 
-    assert (1, 2) in paired_ids
-    assert result.stats.total_pairs >= 1
+    assert (1, 2) not in paired_ids
 
 
 def test_optimize_room_distribution_uses_disjoint_room_pairs():
@@ -740,3 +741,40 @@ def test_trait_loss_penalty_matches_disorder_with_id_suffix():
     # Sanity: mismatched name still produces no penalty.
     desired_other = [{"category": "disorder", "key": "Hypersomnia|7", "weight": 10}]
     assert room_optimizer_impl._trait_loss_penalty(cat, high_health, desired_other) == 0.0
+
+
+def test_unpairable_cat_goes_to_lowest_stim_room_then_fallback():
+    """Cats with no viable partner (most often gay cats, whose only
+    high-compatibility partners are same-sex and so yield no kitten) are
+    parked in the lowest-stimulation breeding room, spilling into fallback
+    only once it is full."""
+    pair_m = _make_cat(1, gender="male", sexuality="straight", stat_seed=8)
+    pair_f = _make_cat(2, gender="female", sexuality="straight", stat_seed=8)
+    # Two same-sex cats: they can only pair with each other, which produces
+    # no kitten, so both are unpairable.
+    lonely_a = _make_cat(3, gender="male", sexuality="gay", stat_seed=5)
+    lonely_b = _make_cat(4, gender="male", sexuality="gay", stat_seed=5)
+
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 2, 90.0),   # high stim
+        RoomConfig("Floor2_Large", RoomType.BREEDING, 1, 10.0),   # lowest stim, 1 slot
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0),
+    ]
+    result = optimize_room_distribution(
+        [pair_m, pair_f, lonely_a, lonely_b],
+        rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None,
+        excluded_keys=set(),
+    )
+
+    # The same-sex pair must never be scored as productive.
+    paired = {
+        tuple(sorted((p.cat_a.db_key, p.cat_b.db_key)))
+        for a in result.rooms for p in a.pairs
+    }
+    assert (3, 4) not in paired
+
+    placements = {key: _room_for_cat(result, key) for key in (3, 4)}
+    # One fits the single lowest-stim slot; the other overflows to fallback.
+    assert sorted(placements.values()) == ["Attic", "Floor2_Large"]

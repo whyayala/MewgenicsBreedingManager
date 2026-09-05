@@ -70,7 +70,9 @@ def test_pair_projection_supports_dict_style_access():
     assert len(projection["expected_stats"]) == len(STAT_NAMES)
 
 
-def test_score_pair_allows_same_sex_bi_pairs_and_blocks_direct_family():
+def test_score_pair_rejects_same_sex_pairs_and_blocks_direct_family():
+    """Same-sex pairs mate but produce no kitten, so they must never be
+    scored as viable breeding pairs."""
     cat_a = _make_cat(1, gender="male", sexuality="bi")
     cat_b = _make_cat(2, gender="male", sexuality="bi")
 
@@ -81,16 +83,28 @@ def test_score_pair_allows_same_sex_bi_pairs_and_blocks_direct_family():
         lover_key_map={1: set(), 2: set()},
         avoid_lovers=False,
     )
-    assert factors.compatible
-    assert factors.quality >= 0.0
+    assert not factors.compatible
+    assert "no kitten" in factors.reason.lower()
+
+    # Opposite-sex bi pair is still fine.
+    cat_c = _make_cat(3, gender="female", sexuality="bi")
+    opposite = score_pair(
+        cat_a,
+        cat_c,
+        hater_key_map={1: set(), 3: set()},
+        lover_key_map={1: set(), 3: set()},
+        avoid_lovers=False,
+    )
+    assert opposite.compatible
+    assert opposite.quality >= 0.0
 
     direct_family = score_pair(
         cat_a,
-        cat_b,
-        hater_key_map={1: set(), 2: set()},
-        lover_key_map={1: set(), 2: set()},
+        cat_c,
+        hater_key_map={1: set(), 3: set()},
+        lover_key_map={1: set(), 3: set()},
         avoid_lovers=False,
-        parent_key_map={1: set(), 2: {1}},
+        parent_key_map={1: set(), 3: {1}},
     )
     assert not direct_family.compatible
     assert "Direct family" in direct_family.reason
@@ -158,7 +172,8 @@ def test_planner_pair_bias_prefers_opposite_or_unknown_gender_pairs():
 
     assert planner_pair_allows_breeding(male, female)
     assert planner_pair_allows_breeding(male, unknown)
-    assert planner_pair_allows_breeding(gay_male_a, gay_male_b)
+    # Same-sex pairs mate but produce no kitten — orientation doesn't change that.
+    assert not planner_pair_allows_breeding(gay_male_a, gay_male_b)
     assert not planner_pair_allows_breeding(male, male)
 
     assert planner_pair_bias(male, female) > planner_pair_bias(male, male)

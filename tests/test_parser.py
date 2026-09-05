@@ -461,11 +461,14 @@ class TestCanBreed:
         ok, reason = can_breed(a, b)
         assert not ok
 
-    def test_same_gender_gay_accepted(self):
+    def test_same_gender_gay_produces_no_kitten(self):
+        """Same-sex pairs mate but produce no kitten (they raise the Gay
+        Stray chance instead), so they are not breedable for our purposes."""
         a = _make_cat(db_key=1, gender="male", sexuality="gay")
         b = _make_cat(db_key=2, gender="male", sexuality="gay")
-        ok, _ = can_breed(a, b)
-        assert ok
+        ok, reason = can_breed(a, b)
+        assert not ok
+        assert "no kitten" in reason.lower()
 
     def test_opposite_gender_gay_warned(self):
         """One gay cat in opposite-sex pair: allowed but with low-compat warning."""
@@ -481,13 +484,20 @@ class TestCanBreed:
         ok, reason = can_breed(a, b)
         assert not ok
 
-    def test_bi_same_gender_warned_against_straight(self):
-        """Bi + straight same-sex: allowed but with low-compat warning."""
+    def test_bi_same_gender_produces_no_kitten(self):
+        """Orientation is irrelevant for same-sex pairs — no kitten either way."""
         a = _make_cat(db_key=1, gender="male", sexuality="bi")
         b = _make_cat(db_key=2, gender="male", sexuality="straight")
         ok, reason = can_breed(a, b)
+        assert not ok
+        assert "no kitten" in reason.lower()
+
+    def test_neutral_gender_pair_still_breeds(self):
+        """A neutral-gender ("?") cat is not a same-sex pair — kittens normally."""
+        a = _make_cat(db_key=1, gender="?", sexuality="gay")
+        b = _make_cat(db_key=2, gender="male", sexuality="gay")
+        ok, _ = can_breed(a, b)
         assert ok
-        assert "straight" in reason.lower()
 
     def test_bi_opposite_gender_allowed(self):
         a = _make_cat(db_key=1, gender="male", sexuality="bi")

@@ -999,7 +999,30 @@ def optimize_room_distribution(
 
         unassigned = [c for c in non_ey_cats if c.db_key not in assigned_cats]
         fallback_rooms = [room.key for room in room_configs if not room.room_type.uses_profile] or (room_order[-1:] if room_order else [])
+        # Cats left without a viable pair cannot produce kittens here — most
+        # commonly gay cats, whose only high-compatibility partners are
+        # same-sex (which mate but yield no kitten). Park them in the
+        # lowest-stimulation breeding room that still has room, so they soak
+        # up as little breeding activity as possible, and only spill into the
+        # fallback rooms once those are full.
+        # Throughput mode deliberately keeps non-pairing cats out of breeding
+        # rooms so they don't dilute pair density, so only do this in the
+        # default mode.
+        quiet_rooms = [] if params.maximize_throughput else sorted(
+            (room for room in room_configs if room.room_type.uses_profile),
+            key=lambda room: (float(room.base_stim or 0.0), room.key),
+        )
         for i, cat in enumerate(unassigned):
+            placed_quiet = False
+            for room in quiet_rooms:
+                if _can_fit_single(room, room_effective_counts[room.key], cat):
+                    room_assignments[room.key].append(cat)
+                    room_effective_counts[room.key] += 1
+                    assigned_cats.add(cat.db_key)
+                    placed_quiet = True
+                    break
+            if placed_quiet:
+                continue
             if not fallback_rooms:
                 break
             room_assignments[fallback_rooms[i % len(fallback_rooms)]].append(cat)
