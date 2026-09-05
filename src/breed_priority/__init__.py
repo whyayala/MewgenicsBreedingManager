@@ -332,9 +332,16 @@ class BreedPriorityView(QWidget):
         # ── Scope, weights, display settings ──
         try:
             self._saved_scope = data.get("scope", {})
+            _saved_w = data.get("weights", {})
             for key in BREED_PRIORITY_WEIGHTS:
-                if key in data.get("weights", {}):
-                    self._weights[key] = float(data["weights"][key])
+                if key in _saved_w:
+                    self._weights[key] = float(_saved_w[key])
+            # Migration: "gay_pref" used to cover BOTH genders. Now that gay
+            # males and gay females are weighted separately, carry the old
+            # single value onto the new female key so existing profiles keep
+            # scoring exactly as before until the user changes it.
+            if "gay_pref" in _saved_w and "gay_female_pref" not in _saved_w:
+                self._weights["gay_female_pref"] = float(_saved_w["gay_pref"])
             _old_trait_w = data.get("weights", {}).get("unique_ma_max")
             if _old_trait_w is not None and not any(
                 k in data.get("weights", {})
@@ -587,6 +594,10 @@ class BreedPriorityView(QWidget):
             new_w["trait_undesirable"] = -_old_trait_w
         for key in BREED_PRIORITY_WEIGHTS:
             self._weights[key] = float(new_w.get(key, BREED_PRIORITY_WEIGHTS[key]))
+        # See migration note above: profiles saved before the gay male/female
+        # split carry only "gay_pref".
+        if "gay_pref" in new_w and "gay_female_pref" not in new_w:
+            self._weights["gay_female_pref"] = float(new_w["gay_pref"])
         if self._weight_spins:
             self._populating = True
             for key, spin in self._weight_spins.items():
