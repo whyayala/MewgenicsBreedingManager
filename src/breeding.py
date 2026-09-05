@@ -157,13 +157,23 @@ def estimate_breeding_compatibility(initiator: Cat, partner: Cat) -> float:
 def pair_breeding_compatibility(a: Cat, b: Cat) -> float:
     """Symmetric compatibility estimate for a pair.
 
-    Returns the *worst-direction* compat so the planner filter matches
-    "this pair reliably produces kittens regardless of who initiates".
-    The game picks a random initiator each day and same-sex pairs see
-    wildly asymmetric sex_mult values when the two cats have different
-    sexuality coefficients — using max would let those pairs slip past
-    a floor even though half of initiations would fail.
+    Mirrors the game's final gate, which recalculates compatibility "with
+    the father treated as the initiator" after assigning father/mother roles
+    by gender. For an opposite-sex pair that role assignment is fixed, so the
+    attempt is gated by the female's sexuality — the same rule
+    ``game_compatibility`` applies, keeping the planner's floor consistent
+    with the optimizer.
+
+    When roles are not fixed by gender (a neutral cat can fill either role;
+    same-sex roles are chosen randomly) fall back to the *worst* direction,
+    so a pair only clears a planner floor if it breeds regardless of who
+    initiates.
     """
+    ga = (a.gender or "?").strip().lower()
+    gb = (b.gender or "?").strip().lower()
+    if ga != gb and ga in ("male", "female") and gb in ("male", "female"):
+        father, mother = (a, b) if ga == "male" else (b, a)
+        return estimate_breeding_compatibility(father, mother)
     return min(
         estimate_breeding_compatibility(a, b),
         estimate_breeding_compatibility(b, a),

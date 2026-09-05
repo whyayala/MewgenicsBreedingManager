@@ -312,3 +312,29 @@ def test_opposite_sex_gate_uses_the_female_sexuality():
     # Either can still breed with a neutral cat (multiplier 1).
     assert game_compatibility(gay_female, neutral) >= 0.05
     assert game_compatibility(gay_male, neutral) >= 0.05
+
+
+def test_planner_floor_agrees_with_optimizer_gate_on_sexuality():
+    """The Perfect 7 Planner's compatibility floor and the optimizer's gate
+    are separate implementations — they must agree on who can breed."""
+    from breeding import game_compatibility, pair_breeding_compatibility
+
+    gay_female = _make_cat(1, gender="female", sexuality="gay")
+    gay_male = _make_cat(2, gender="male", sexuality="gay")
+    straight_female = _make_cat(3, gender="female", sexuality="straight")
+    straight_male = _make_cat(4, gender="male", sexuality="straight")
+    neutral = _make_cat(5, gender="?", sexuality="straight")
+    for cat, raw in ((gay_female, 0.98), (gay_male, 0.98),
+                     (straight_female, 0.02), (straight_male, 0.02)):
+        cat.sexuality_raw = raw
+
+    for left, right in (
+        (gay_female, straight_male),
+        (gay_male, straight_female),
+        (gay_female, neutral),
+        (gay_male, neutral),
+        (straight_female, straight_male),
+    ):
+        optimizer_ok = game_compatibility(left, right) >= 0.05
+        planner_ok = pair_breeding_compatibility(left, right) >= 0.05
+        assert optimizer_ok == planner_ok, (left.name, right.name)
