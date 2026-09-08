@@ -253,7 +253,7 @@ class RoomOptimizerView(QWidget):
             "room_optimizer.toggle.prefer_high_libido": "Prefer High Libido",
             "room_optimizer.toggle.maximize_throughput": "Maximize Throughput",
             "room_optimizer.toggle.ignore_stat_priority": "Ignore Class Stat Priorities",
-            "room_optimizer.toggle.send_kittens_to_fallback": "Kittens to Fallback",
+            "room_optimizer.toggle.send_kittens_to_fallback": "Kittens to Quiet Rooms",
             "room_optimizer.toggle.avoid_trait_loss": "Avoid Trait Loss",
             "room_optimizer.toggle.use_sa": "More Depth",
         }
@@ -712,7 +712,7 @@ class RoomOptimizerView(QWidget):
         self._send_kittens_checkbox.setToolTip(
             _tr(
                 "room_optimizer.tooltip.send_kittens_to_fallback",
-                default="Route kittens (age 0-1) to fallback rooms since they can't breed yet. Eternal-youth cats are unaffected.",
+                default="Keep kittens out of the breeding rotation since they can't breed yet. They are placed in the quietest (lowest-stimulation) room first, overflowing to the fallback rooms when it is full. Eternal-youth cats are unaffected.",
             )
         )
         self._send_kittens_checkbox.setStyleSheet(
@@ -1504,7 +1504,7 @@ class RoomOptimizerView(QWidget):
             self._send_kittens_checkbox.setToolTip(
                 _tr(
                     "room_optimizer.tooltip.send_kittens_to_fallback",
-                    default="Route kittens (age 0-1) to fallback rooms since they can't breed yet. Eternal-youth cats are unaffected.",
+                    default="Keep kittens out of the breeding rotation since they can't breed yet. They are placed in the quietest (lowest-stimulation) room first, overflowing to the fallback rooms when it is full. Eternal-youth cats are unaffected.",
                 )
             )
         if hasattr(self, "_avoid_trait_loss_checkbox"):

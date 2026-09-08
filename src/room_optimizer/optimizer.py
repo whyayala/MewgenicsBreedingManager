@@ -646,15 +646,51 @@ def optimize_room_distribution(
         if kitten_cats:
             kitten_ids = {c.db_key for c in kitten_cats}
             non_ey_cats = [c for c in non_ey_cats if c.db_key not in kitten_ids]
-            fallback_rooms_for_kittens = (
-                [room.key for room in room_configs if not room.room_type.uses_profile]
+            # Kittens are too young to breed, so keep them out of the busy
+            # rooms where the adults pair up. Prefer the quietest breeding
+            # rooms first and fall back to the fallback rooms only when those
+            # are full: fallbacks tend to be the fight rooms, which is a poor
+            # nursery. (Previously kittens went straight to the fallback, and
+            # with no fallback configured they landed in whatever room came
+            # last in room order — often a high-stimulation breeding room.)
+            fallback_rooms_for_kittens = [
+                room for room in room_configs if not room.room_type.uses_profile
+            ]
+            # Quietest room wins, so a full nursery overflows into the
+            # fallback rather than into a loud breeding room. Ties go to the
+            # fallback: with no stimulation advantage to gain there is no
+            # reason to consume a breeding slot.
+            nursery_order = sorted(
+                room_configs,
+                key=lambda room: (
+                    float(room.base_stim or 0.0),
+                    room.room_type.uses_profile,
+                    room.key,
+                ),
+            )
+            # Last resort keeps the old guarantee that kittens are always
+            # placed somewhere, even when every room is at capacity.
+            overflow_keys = (
+                [room.key for room in fallback_rooms_for_kittens]
                 or (room_order[-1:] if room_order else [])
             )
-            if fallback_rooms_for_kittens:
-                for i, cat in enumerate(kitten_cats):
-                    target = fallback_rooms_for_kittens[i % len(fallback_rooms_for_kittens)]
-                    room_assignments[target].append(cat)
-                    assigned_cats.add(cat.db_key)
+            for i, cat in enumerate(kitten_cats):
+                placed = False
+                for room in nursery_order:
+                    if _can_fit_single(room, room_effective_counts[room.key], cat):
+                        room_assignments[room.key].append(cat)
+                        room_effective_counts[room.key] += 1
+                        assigned_cats.add(cat.db_key)
+                        placed = True
+                        break
+                if placed:
+                    continue
+                if not overflow_keys:
+                    continue
+                target = overflow_keys[i % len(overflow_keys)]
+                room_assignments[target].append(cat)
+                room_effective_counts[target] = room_effective_counts.get(target, 0) + 1
+                assigned_cats.add(cat.db_key)
 
     cats_by_id = {c.db_key: c for c in filtered_cats}
     original_state = {c.db_key: (c.room or "") for c in filtered_cats}

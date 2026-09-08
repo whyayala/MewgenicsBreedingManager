@@ -855,3 +855,76 @@ def test_universally_undesired_helper_semantics():
     # Planner-style "name|id" keys match the bare disorder name.
     suffixed = _profiles_rating("sociopathy|42", -6)
     assert room_optimizer_impl._universally_undesired_disorders(cat, suffixed) == ["sociopathy"]
+
+
+def _kitten_params(**kw):
+    return OptimizationParams(
+        max_risk=100.0, avoid_lovers=False, use_sa=False,
+        send_kittens_to_fallback=True, kitten_age_threshold=2, **kw,
+    )
+
+
+def test_kittens_prefer_lowest_stim_room_over_fallback():
+    """Kittens can't breed, so park them in the quietest room. The fallback
+    tends to be the fight room, so it is not the first choice."""
+    kitten = _make_cat(1, gender="male", age=1)
+    adult_m = _make_cat(2, gender="male", age=5, stat_seed=7)
+    adult_f = _make_cat(3, gender="female", age=5, stat_seed=7)
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 90.0),
+        RoomConfig("Floor2_Large", RoomType.BREEDING, 6, 10.0),  # quietest
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0),
+    ]
+    result = optimize_room_distribution([kitten, adult_m, adult_f], rooms,
+                                        _kitten_params(), cache=None, excluded_keys=set())
+    assert _room_for_cat(result, 1) == "Floor2_Large"
+
+
+def test_kittens_overflow_to_fallback_not_a_loud_breeding_room():
+    """When the quiet room fills, the overflow must go to the fallback
+    rather than into the highest-stimulation breeding room."""
+    kittens = [_make_cat(i, gender="male", age=1) for i in range(1, 6)]
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 90.0),
+        RoomConfig("Floor2_Large", RoomType.BREEDING, 2, 10.0),  # quietest, only 2 slots
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0),
+    ]
+    result = optimize_room_distribution(kittens, rooms, _kitten_params(),
+                                        cache=None, excluded_keys=set())
+    placements = [_room_for_cat(result, c.db_key) for c in kittens]
+    assert placements.count("Floor2_Large") == 2
+    assert placements.count("Attic") == 3
+    assert "Floor1_Large" not in placements
+
+
+def test_kittens_use_quietest_room_when_no_fallback_configured():
+    """With every room set to a breeding tree there is no fallback; kittens
+    used to land in whatever room came last in room order, often a
+    high-stimulation one."""
+    kitten = _make_cat(1, gender="male", age=1)
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 90.0),
+        RoomConfig("Floor2_Large", RoomType.BREEDING, 6, 10.0),  # quietest
+        RoomConfig("Attic", RoomType.BREEDING, 6, 70.0),
+    ]
+    result = optimize_room_distribution([kitten], rooms, _kitten_params(),
+                                        cache=None, excluded_keys=set())
+    assert _room_for_cat(result, 1) == "Floor2_Large"
+
+
+def test_kitten_routing_off_by_default():
+    """The behaviour stays behind the existing "Kittens to Fallback" toggle."""
+    kitten = _make_cat(1, gender="male", age=1)
+    adult_m = _make_cat(2, gender="male", age=5, stat_seed=7)
+    adult_f = _make_cat(3, gender="female", age=5, stat_seed=7)
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 90.0),
+        RoomConfig("Floor2_Large", RoomType.BREEDING, 6, 10.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0),
+    ]
+    result = optimize_room_distribution(
+        [kitten, adult_m, adult_f], rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set())
+    # Not force-routed: the kitten is placed by the normal assignment pass.
+    assert _room_for_cat(result, 1) is not None
