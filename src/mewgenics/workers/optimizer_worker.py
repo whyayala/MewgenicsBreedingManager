@@ -57,6 +57,13 @@ class RoomOptimizerWorker(QThread):
         except (TypeError, ValueError):
             kitten_age_threshold = 2
         avoid_trait_loss = bool(p.get("avoid_trait_loss", False))
+        # Cap breeding-room occupancy so Comfort stays at this level, keeping
+        # the overnight fight chance near 1% instead of the ~16% a
+        # Comfort-0 (nominally "full") room carries. 0 disables the cap.
+        try:
+            comfort_target = float(p.get("comfort_target", 10.0))
+        except (TypeError, ValueError):
+            comfort_target = 10.0
         sa_temperature = float(p.get("sa_temperature", 8.0) or 8.0)
         sa_neighbors = int(p.get("sa_neighbors", 120) or 120)
         mode_family = bool(p.get("mode_family", False))
@@ -100,6 +107,7 @@ class RoomOptimizerWorker(QThread):
             send_kittens_to_fallback=send_kittens_to_fallback,
             kitten_age_threshold=kitten_age_threshold,
             avoid_trait_loss=avoid_trait_loss,
+            comfort_target=comfort_target,
         )
 
         optimized = optimize_room_distribution(
@@ -243,5 +251,6 @@ class RoomOptimizerWorker(QThread):
             "use_sa": use_sa,
             "send_kittens_to_fallback": send_kittens_to_fallback,
             "avoid_trait_loss": avoid_trait_loss,
+            "comfort_target": comfort_target,
         })
         return

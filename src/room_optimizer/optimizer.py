@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from functools import lru_cache
 from typing import Iterable
 
@@ -204,6 +205,63 @@ def _room_effect(
         return 0.0
 
 
+def _room_effect_signed(
+    room_key: str,
+    room_stats: dict[str, FurnitureRoomSummary] | None,
+    effect_name: str,
+) -> float:
+    """Like _room_effect but preserves sign — Comfort can be negative."""
+    summary = (room_stats or {}).get(room_key)
+    if summary is None:
+        return 0.0
+    try:
+        return float(summary.raw_effects.get(effect_name, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+COMFORT_FREE_CATS = 4
+"""Cats a room holds before Comfort starts dropping (-1 per extra cat)."""
+
+
+def comfort_capped_occupancy(comfort: float, comfort_target: float) -> int:
+    """Max cats that keep post-crowding Comfort at or above *comfort_target*.
+
+    Comfort loses 1 per cat above 4, so ``comfort - (cats - 4) >= target``
+    gives ``cats <= comfort - target + 4``. Never returns less than 4, since
+    the first four cats cost no Comfort — in a room too uncomfortable to hit
+    the target, four is still the least-bad occupancy.
+    """
+    allowed = int(math.floor(float(comfort) - float(comfort_target))) + COMFORT_FREE_CATS
+    return max(COMFORT_FREE_CATS, allowed)
+
+
+def apply_comfort_target(
+    room_configs: list[RoomConfig],
+    comfort_target: float,
+) -> list[RoomConfig]:
+    """Tighten each breeding room's capacity to respect *comfort_target*.
+
+    A room's nominal capacity is the point where Comfort hits 0, which is
+    also where the overnight fight chance peaks (~16%). Capping occupancy so
+    Comfort stays at the target instead keeps that risk near 1%.
+
+    Fallback rooms are left uncapped: they are the overflow of last resort,
+    and capping them would leave cats with nowhere to go.
+    """
+    if comfort_target <= 0:
+        return room_configs
+    adjusted: list[RoomConfig] = []
+    for room in room_configs:
+        if not room.room_type.uses_profile:
+            adjusted.append(room)
+            continue
+        cap = comfort_capped_occupancy(room.comfort, comfort_target)
+        limit = cap if room.max_cats is None else min(room.max_cats, cap)
+        adjusted.append(replace(room, max_cats=limit))
+    return adjusted
+
+
 def best_breeding_room_stimulation(room_configs: list[RoomConfig], fallback: float = 50.0) -> float:
     """Return the strongest breeding-room stimulation available for generic pair scoring."""
     breeding_stims = [room.base_stim for room in room_configs if room.room_type.uses_profile]
@@ -247,6 +305,7 @@ def build_room_configs(
                     base_stim=_room_base_stim(entry, key, room_stats),
                     evolution=_room_effect(key, room_stats, "Evolution"),
                     health=_room_effect(key, room_stats, "Health"),
+                    comfort=_room_effect_signed(key, room_stats, "Comfort"),
                 )
             )
         return out
@@ -266,6 +325,7 @@ def build_room_configs(
                 base_stim=_room_base_stim({}, room, room_stats),
                 evolution=_room_effect(room, room_stats, "Evolution"),
                 health=_room_effect(room, room_stats, "Health"),
+                comfort=_room_effect_signed(room, room_stats, "Comfort"),
             )
         )
     return out
@@ -609,6 +669,9 @@ def optimize_room_distribution(
     """
     excluded_keys = excluded_keys or set()
     _cancelled = cancel_check or (lambda: False)
+    # Tighten breeding-room capacity so Comfort stays above the fight-risk
+    # threshold instead of being driven to 0 by a full room.
+    room_configs = apply_comfort_target(room_configs, params.comfort_target)
     filtered_cats = _filter_cats(cats, excluded_keys, params.min_stats)
 
     if not filtered_cats:

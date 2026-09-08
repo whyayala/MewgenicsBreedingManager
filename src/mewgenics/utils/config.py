@@ -457,6 +457,21 @@ def _saved_optimizer_flag(name: str, default: bool = False) -> bool:
     return bool(value)
 
 
+def _saved_optimizer_comfort_target(default: float = 10.0) -> float:
+    """Room Comfort the optimizer keeps breeding rooms at (0 disables).
+
+    Comfort drives the overnight fight roll, so a nominally "full" room —
+    one filled until Comfort reaches 0 — carries roughly a 16% chance of a
+    fight, versus about 1% at Comfort 10.
+    """
+    data = _load_app_config()
+    value = data.get("optimizer_flags", {}).get("comfort_target", default)
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _set_optimizer_flag(name: str, value: bool):
     data = _load_app_config()
     flags = data.get("optimizer_flags")

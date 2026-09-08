@@ -41,6 +41,11 @@ class RoomConfig:
     base_stim: float = 50.0
     evolution: float = 0.0
     health: float = 0.0
+    # Furniture Comfort for the room, before the crowding penalty. Signed:
+    # rooms can have negative Comfort. Used to cap occupancy so the room
+    # stays above the fight-risk threshold (see OptimizationParams.
+    # comfort_target).
+    comfort: float = 0.0
 
     @property
     def display_name(self) -> str:
@@ -113,6 +118,15 @@ class OptimizationParams:
     # High-Mutation rooms stopped rerolling existing mutations in game 1.1,
     # so mutations no longer need protecting.
     avoid_trait_loss: bool = False
+    # Target room Comfort AFTER the crowding penalty (-1 per cat above 4).
+    # Comfort drives the overnight fight roll: fight_avoidance = 1 - 0.1 x
+    # Comfort, which works out to roughly 18.75% - 1.5% x Comfort - 0.48% x
+    # average Charisma. At Comfort 0 that is a ~16% chance of a fight, and at
+    # Comfort 10 about 1% — so filling a room until Comfort hits 0 (its
+    # nominal capacity) invites fights. Occupancy is capped at whatever keeps
+    # Comfort at or above this value. Set to 0 to disable and use the raw
+    # room capacity.
+    comfort_target: float = 10.0
 
 
 @dataclass

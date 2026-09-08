@@ -928,3 +928,63 @@ def test_kitten_routing_off_by_default():
         cache=None, excluded_keys=set())
     # Not force-routed: the kitten is placed by the normal assignment pass.
     assert _room_for_cat(result, 1) is not None
+
+
+def test_comfort_capped_occupancy_lands_on_target():
+    """Comfort drops 1 per cat above 4, so the cap is comfort - target + 4.
+    Where the target is reachable the resulting Comfort is exactly it."""
+    from room_optimizer.optimizer import comfort_capped_occupancy
+    for comfort, expected in ((14, 8), (16, 10), (20, 14), (26, 20)):
+        cap = comfort_capped_occupancy(comfort, 10.0)
+        assert cap == expected, (comfort, cap)
+        assert comfort - max(0, cap - 4) == 10
+    # Rooms too uncomfortable to reach the target still allow the four
+    # cats that cost no Comfort.
+    for comfort in (10, 6, 0, -4):
+        assert comfort_capped_occupancy(comfort, 10.0) == 4
+
+
+def test_apply_comfort_target_tightens_breeding_rooms_only():
+    from room_optimizer.optimizer import apply_comfort_target
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 20, 50.0, comfort=20.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=25.0),
+    ]
+    adjusted = {r.key: r for r in apply_comfort_target(rooms, 10.0)}
+    # comfort 20 -> 14 cats keeps Comfort at 10, tighter than the user's 20
+    assert adjusted["Floor1_Large"].max_cats == 14
+    # Fallback stays uncapped — it is the overflow of last resort.
+    assert adjusted["Attic"].max_cats is None
+
+
+def test_apply_comfort_target_never_loosens_user_capacity():
+    from room_optimizer.optimizer import apply_comfort_target
+    rooms = [RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0, comfort=30.0)]
+    adjusted = apply_comfort_target(rooms, 10.0)
+    # comfort 30 would allow 24, but the user asked for 6.
+    assert adjusted[0].max_cats == 6
+
+
+def test_comfort_target_zero_disables_the_cap():
+    from room_optimizer.optimizer import apply_comfort_target
+    rooms = [RoomConfig("Floor1_Large", RoomType.BREEDING, 20, 50.0, comfort=6.0)]
+    assert apply_comfort_target(rooms, 0.0)[0].max_cats == 20
+
+
+def test_optimizer_respects_comfort_cap_end_to_end():
+    """A room with Comfort 14 must not take more than 8 cats."""
+    cats = [_make_cat(i, gender="male" if i % 2 else "female", age=5)
+            for i in range(1, 21)]
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 20, 50.0, comfort=14.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=25.0),
+    ]
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+    breeding = next(a for a in result.rooms if a.room.key == "Floor1_Large")
+    assert len(breeding.cats) <= 8, len(breeding.cats)
+    # Everyone still has a home, thanks to the uncapped fallback.
+    assert sum(len(a.cats) for a in result.rooms) == 20
