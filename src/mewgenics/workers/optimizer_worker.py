@@ -57,6 +57,13 @@ class RoomOptimizerWorker(QThread):
         except (TypeError, ValueError):
             kitten_age_threshold = 2
         avoid_trait_loss = bool(p.get("avoid_trait_loss", False))
+        # Cap breeding-room occupancy so Comfort stays at this level, keeping
+        # the overnight fight chance near 1% instead of the ~16% a
+        # Comfort-0 (nominally "full") room carries. 0 disables the cap.
+        try:
+            comfort_target = float(p.get("comfort_target", 10.0))
+        except (TypeError, ValueError):
+            comfort_target = 10.0
         sa_temperature = float(p.get("sa_temperature", 8.0) or 8.0)
         sa_neighbors = int(p.get("sa_neighbors", 120) or 120)
         mode_family = bool(p.get("mode_family", False))
@@ -100,6 +107,7 @@ class RoomOptimizerWorker(QThread):
             send_kittens_to_fallback=send_kittens_to_fallback,
             kitten_age_threshold=kitten_age_threshold,
             avoid_trait_loss=avoid_trait_loss,
+            comfort_target=comfort_target,
         )
 
         optimized = optimize_room_distribution(
@@ -209,6 +217,15 @@ class RoomOptimizerWorker(QThread):
                 "is_fallback": room.room_type == RoomType.FALLBACK,
             })
 
+        # Cats the optimizer could not place (every room at capacity) must be
+        # reported too, otherwise they silently disappear from the results
+        # now that rooms are no longer overfilled.
+        _reported = {c.db_key for c in excluded_cats}
+        for _c in optimized.excluded_cats:
+            if _c.db_key not in _reported:
+                excluded_cats.append(_c)
+                _reported.add(_c.db_key)
+
         excluded_rows = [
             {
                 "name": f"{c.name} ({c.gender_display})",
@@ -243,5 +260,6 @@ class RoomOptimizerWorker(QThread):
             "use_sa": use_sa,
             "send_kittens_to_fallback": send_kittens_to_fallback,
             "avoid_trait_loss": avoid_trait_loss,
+            "comfort_target": comfort_target,
         })
         return

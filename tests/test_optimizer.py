@@ -423,8 +423,9 @@ def test_large_room_greedy_fallback_completes_quickly():
 
 
 def test_no_fallback_room_does_not_hang():
-    """When all rooms are breeding rooms (no fallback), overflow cats end up
-    in the last breeding room.  The DP cap must prevent this from hanging."""
+    """When all rooms are breeding rooms (no fallback) and every room is at
+    capacity, the overflow cats are reported as excluded rather than
+    overfilling a room. The DP cap must prevent this from hanging."""
     import time
 
     cats = []
@@ -432,10 +433,12 @@ def test_no_fallback_room_does_not_hang():
         gender = "male" if i % 2 == 0 else "female"
         cats.append(_make_cat(i + 1, gender=gender, sexuality="bi", stat_seed=5))
 
-    # All rooms are breeding rooms with cap 6 — only 12 cats fit, 28 overflow
+    # All rooms are breeding rooms with cap 6 — only 12 cats fit, 28 overflow.
+    # Comfort 12 lets all 6 slots be used while still holding Comfort at the
+    # default target of 10; this test is about the DP cap, not about Comfort.
     room_configs = [
-        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0),
-        RoomConfig("Floor1_Small", RoomType.BREEDING, 6, 50.0),
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0, comfort=12.0),
+        RoomConfig("Floor1_Small", RoomType.BREEDING, 6, 50.0, comfort=12.0),
     ]
     start = time.monotonic()
     result = optimize_room_distribution(
@@ -448,7 +451,12 @@ def test_no_fallback_room_does_not_hang():
     elapsed = time.monotonic() - start
 
     assert elapsed < 30.0, f"Optimizer took {elapsed:.1f}s with no fallback room"
-    assert result.stats.assigned_cats == 40
+    # Two rooms x cap 6 = 12 slots; the remaining 28 cats stay where they are
+    # and are surfaced as excluded instead of being crammed in.
+    placed = sum(len(assignment.cats) for assignment in result.rooms)
+    assert placed == 12, placed
+    assert result.stats.assigned_cats == 12
+    assert len(result.excluded_cats) == 28
 
 
 def test_greedy_fallback_produces_reasonable_pairs():
@@ -459,8 +467,10 @@ def test_greedy_fallback_produces_reasonable_pairs():
         gender = "male" if i % 2 == 0 else "female"
         cats.append(_make_cat(i + 1, gender=gender, sexuality="bi", stat_seed=6))
 
+    # Comfort 34 keeps all 28 cats in one room at the default Comfort target
+    # of 10 — this test is about greedy pair selection, not about Comfort.
     room_configs = [
-        RoomConfig("Floor1_Large", RoomType.BREEDING, None, 50.0),
+        RoomConfig("Floor1_Large", RoomType.BREEDING, None, 50.0, comfort=34.0),
     ]
     result = optimize_room_distribution(
         cats,
@@ -928,3 +938,195 @@ def test_kitten_routing_off_by_default():
         cache=None, excluded_keys=set())
     # Not force-routed: the kitten is placed by the normal assignment pass.
     assert _room_for_cat(result, 1) is not None
+
+
+def test_blocked_cats_are_moved_to_the_fallback_room():
+    """Cats blocked from breeding (the Alive Cats exclude flag / blacklist)
+    should be relocated to the fallback room rather than left wherever they
+    happen to be sitting — otherwise they occupy breeding-room space."""
+    blocked = _make_cat(1, gender="male", room="Floor1_Large", age=5)
+    adult_m = _make_cat(2, gender="male", stat_seed=7, age=5)
+    adult_f = _make_cat(3, gender="female", stat_seed=7, age=5)
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0),
+    ]
+    result = optimize_room_distribution(
+        [blocked, adult_m, adult_f], rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys={1},
+    )
+
+    assert _room_for_cat(result, 1) == "Attic"
+    # ...and never paired, since fallback rooms don't select pairs.
+    paired = {c.db_key for a in result.rooms for p in a.pairs for c in (p.cat_a, p.cat_b)}
+    assert 1 not in paired
+    # Blocked cats aren't breeding candidates, so they don't inflate the stats.
+    assert result.stats.total_cats == 2
+
+
+def test_rooms_are_not_overfilled_and_overflow_is_reported():
+    """Capacity is a real limit: cats that fit nowhere are left where they
+    are and surfaced as excluded, instead of being crammed into a room."""
+    cats = [_make_cat(i, gender="male" if i % 2 else "female", age=5)
+            for i in range(1, 11)]
+    rooms = [RoomConfig("Floor1_Large", RoomType.BREEDING, 4, 50.0)]
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+    placed = sum(len(a.cats) for a in result.rooms)
+    assert placed == 4
+    assert len(result.excluded_cats) == 6
+
+
+def test_blocked_cats_left_alone_when_no_fallback_exists():
+    """With no fallback room configured there is nowhere safe to move a
+    blocked cat, so it is left where it is rather than dropped into a
+    breeding room."""
+    blocked = _make_cat(1, gender="male", room="Floor1_Large", age=5)
+    rooms = [RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0)]
+    result = optimize_room_distribution(
+        [blocked], rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys={1},
+    )
+    assert _room_for_cat(result, 1) is None
+
+
+def test_comfort_capped_occupancy_lands_on_target():
+    """Comfort drops 1 per cat above 4, so the cap is comfort - target + 4.
+    Where the target is reachable the resulting Comfort is exactly it."""
+    from room_optimizer.optimizer import comfort_capped_occupancy
+    for comfort, expected in ((14, 8), (16, 10), (20, 14), (26, 20)):
+        cap = comfort_capped_occupancy(comfort, 10.0)
+        assert cap == expected, (comfort, cap)
+        assert comfort - max(0, cap - 4) == 10
+    # Rooms too uncomfortable to reach the target still allow the four
+    # cats that cost no Comfort.
+    for comfort in (10, 6, 0, -4):
+        assert comfort_capped_occupancy(comfort, 10.0) == 4
+
+
+def test_apply_comfort_target_tightens_breeding_rooms_only():
+    from room_optimizer.optimizer import apply_comfort_target
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 20, 50.0, comfort=20.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=25.0),
+    ]
+    adjusted = {r.key: r for r in apply_comfort_target(rooms, 10.0)}
+    # comfort 20 -> 14 cats keeps Comfort at 10, tighter than the user's 20
+    assert adjusted["Floor1_Large"].max_cats == 14
+    # Fallback stays uncapped — it is the overflow of last resort.
+    assert adjusted["Attic"].max_cats is None
+
+
+def test_apply_comfort_target_never_loosens_user_capacity():
+    from room_optimizer.optimizer import apply_comfort_target
+    rooms = [RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0, comfort=30.0)]
+    adjusted = apply_comfort_target(rooms, 10.0)
+    # comfort 30 would allow 24, but the user asked for 6.
+    assert adjusted[0].max_cats == 6
+
+
+def test_comfort_target_zero_disables_the_cap():
+    from room_optimizer.optimizer import apply_comfort_target
+    rooms = [RoomConfig("Floor1_Large", RoomType.BREEDING, 20, 50.0, comfort=6.0)]
+    assert apply_comfort_target(rooms, 0.0)[0].max_cats == 20
+
+
+def test_optimizer_respects_comfort_cap_end_to_end():
+    """A room with Comfort 14 must not take more than 8 cats."""
+    cats = [_make_cat(i, gender="male" if i % 2 else "female", age=5)
+            for i in range(1, 21)]
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 20, 50.0, comfort=14.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=25.0),
+    ]
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+    breeding = next(a for a in result.rooms if a.room.key == "Floor1_Large")
+    assert len(breeding.cats) <= 8, len(breeding.cats)
+    # Everyone still has a home, thanks to the uncapped fallback.
+    assert sum(len(a.cats) for a in result.rooms) == 20
+
+
+def _comfort_stats(**rooms):
+    from save_parser import FurnitureRoomSummary
+    return {
+        room: FurnitureRoomSummary(
+            room=room, cat_count=0, furniture_count=1, items=(),
+            raw_effects={"Comfort": float(comfort), "Stimulation": 50.0},
+            effective_effects={}, all_effects={},
+        )
+        for room, comfort in rooms.items()
+    }
+
+
+def test_min_comfort_derives_room_capacity():
+    """Min Comfort replaces the hand-computed capacity: the user states the
+    Comfort floor and occupancy follows from the room's furniture."""
+    stats = _comfort_stats(Floor1_Large=23.0, Floor2_Large=6.0)
+    configs = {
+        c.key: c for c in build_room_configs(
+            [
+                {"room": "Floor1_Large", "type": "best_pairs", "min_comfort": 10},
+                {"room": "Floor2_Large", "type": "best_pairs", "min_comfort": 10},
+            ],
+            available_rooms=["Floor1_Large", "Floor2_Large"],
+            room_stats=stats,
+        )
+    }
+    # Comfort 23 - (17 - 4) = 10
+    assert configs["Floor1_Large"].max_cats == 17
+    # Comfort 6 can never reach 10, so only the 4 free cats are allowed.
+    assert configs["Floor2_Large"].max_cats == 4
+
+
+def test_min_comfort_zero_allows_filling_to_zero_comfort():
+    stats = _comfort_stats(Floor1_Large=23.0)
+    cfg = build_room_configs(
+        [{"room": "Floor1_Large", "type": "best_pairs", "min_comfort": 0}],
+        available_rooms=["Floor1_Large"], room_stats=stats,
+    )[0]
+    assert cfg.max_cats == 27  # Comfort hits 0 at 27 cats
+
+
+def test_fallback_rooms_ignore_min_comfort():
+    stats = _comfort_stats(Attic=25.0)
+    cfg = build_room_configs(
+        [{"room": "Attic", "type": "fallback", "min_comfort": 10}],
+        available_rooms=["Attic"], room_stats=stats,
+    )[0]
+    assert cfg.max_cats is None
+
+
+def test_legacy_capacity_config_still_honoured():
+    """Configs saved before Min Comfort existed keep their explicit capacity,
+    with the global comfort target still applying on top."""
+    from room_optimizer.optimizer import apply_comfort_target
+    stats = _comfort_stats(Floor1_Large=23.0)
+    cfg = build_room_configs(
+        [{"room": "Floor1_Large", "type": "best_pairs", "max_cats": 20}],
+        available_rooms=["Floor1_Large"], room_stats=stats,
+    )[0]
+    assert cfg.max_cats == 20
+    assert cfg.min_comfort is None
+    assert apply_comfort_target([cfg], 10.0)[0].max_cats == 17
+
+
+def test_per_room_min_comfort_not_capped_twice():
+    """A room carrying its own Comfort floor must not also be squeezed by the
+    global comfort_target."""
+    from room_optimizer.optimizer import apply_comfort_target
+    stats = _comfort_stats(Floor1_Large=23.0)
+    cfg = build_room_configs(
+        [{"room": "Floor1_Large", "type": "best_pairs", "min_comfort": 4}],
+        available_rooms=["Floor1_Large"], room_stats=stats,
+    )[0]
+    assert cfg.max_cats == 23  # Comfort 23 - (23-4) = 4
+    assert apply_comfort_target([cfg], 10.0)[0].max_cats == 23

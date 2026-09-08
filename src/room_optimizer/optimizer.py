@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from functools import lru_cache
 from typing import Iterable
 
@@ -141,6 +142,35 @@ def _universally_undesired_disorders(cat: Cat, mode_profiles: dict[str, dict]) -
     return sorted(negative - positive)
 
 
+def _place_in_first_fitting_room(
+    cat: Cat,
+    rooms: list[RoomConfig],
+    room_assignments: dict[str, list[Cat]],
+    room_effective_counts: dict[str, int],
+    assigned_cats: set[int],
+    *,
+    offset: int = 0,
+) -> bool:
+    """Place *cat* in the first room from *rooms* that has capacity.
+
+    Rooms are tried starting at ``offset`` so successive cats spread across
+    equally-suitable rooms instead of packing the first one. Returns False
+    when no room has room left, leaving the cat unassigned rather than
+    overfilling — the caller reports those as excluded.
+    """
+    if not rooms:
+        return False
+    count = len(rooms)
+    for step in range(count):
+        room = rooms[(offset + step) % count]
+        if _can_fit_single(room, room_effective_counts.get(room.key, 0), cat):
+            room_assignments[room.key].append(cat)
+            room_effective_counts[room.key] = room_effective_counts.get(room.key, 0) + 1
+            assigned_cats.add(cat.db_key)
+            return True
+    return False
+
+
 def _filter_cats(cats: list[Cat], excluded_keys: set[int], min_stats: int) -> list[Cat]:
     return [
         c
@@ -170,6 +200,44 @@ def _coerce_room_capacity(value, *, room_type: RoomType) -> int | None:
     if capacity <= 0:
         return None
     return capacity
+
+
+def _entry_min_comfort(entry: dict) -> float | None:
+    """Read the room's Min Comfort setting, or None when it isn't set."""
+    if "min_comfort" not in entry:
+        return None
+    value = entry.get("min_comfort")
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _room_capacity_from_entry(
+    entry: dict,
+    room_key: str,
+    room_type: RoomType,
+    room_stats: dict[str, FurnitureRoomSummary] | None,
+) -> int | None:
+    """Capacity for a room, derived from Min Comfort when it is configured.
+
+    Min Comfort replaces the old hand-computed capacity: the user says how
+    comfortable the room should stay and the occupancy follows from the
+    room's furniture Comfort, rather than making them work out whether a
+    given headcount lands above or below the fight-risk threshold.
+
+    Fallback rooms stay uncapped — they absorb the overflow. Rooms with no
+    Min Comfort fall back to the legacy explicit capacity.
+    """
+    if not room_type.uses_profile:
+        return _coerce_room_capacity(entry.get("max_cats", entry.get("capacity")), room_type=room_type)
+    target = _entry_min_comfort(entry)
+    if target is None:
+        return _coerce_room_capacity(entry.get("max_cats", entry.get("capacity")), room_type=room_type)
+    comfort = _room_effect_signed(room_key, room_stats, "Comfort")
+    return comfort_capped_occupancy(comfort, target)
 
 
 def _room_base_stim(entry: dict, room_key: str, room_stats: dict[str, FurnitureRoomSummary] | None) -> float:
@@ -202,6 +270,68 @@ def _room_effect(
         return max(0.0, float(summary.raw_effects.get(effect_name, 0.0) or 0.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _room_effect_signed(
+    room_key: str,
+    room_stats: dict[str, FurnitureRoomSummary] | None,
+    effect_name: str,
+) -> float:
+    """Like _room_effect but preserves sign — Comfort can be negative."""
+    summary = (room_stats or {}).get(room_key)
+    if summary is None:
+        return 0.0
+    try:
+        return float(summary.raw_effects.get(effect_name, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+COMFORT_FREE_CATS = 4
+"""Cats a room holds before Comfort starts dropping (-1 per extra cat)."""
+
+
+def comfort_capped_occupancy(comfort: float, comfort_target: float) -> int:
+    """Max cats that keep post-crowding Comfort at or above *comfort_target*.
+
+    Comfort loses 1 per cat above 4, so ``comfort - (cats - 4) >= target``
+    gives ``cats <= comfort - target + 4``. Never returns less than 4, since
+    the first four cats cost no Comfort — in a room too uncomfortable to hit
+    the target, four is still the least-bad occupancy.
+    """
+    allowed = int(math.floor(float(comfort) - float(comfort_target))) + COMFORT_FREE_CATS
+    return max(COMFORT_FREE_CATS, allowed)
+
+
+def apply_comfort_target(
+    room_configs: list[RoomConfig],
+    comfort_target: float,
+) -> list[RoomConfig]:
+    """Tighten each breeding room's capacity to respect *comfort_target*.
+
+    A room's nominal capacity is the point where Comfort hits 0, which is
+    also where the overnight fight chance peaks (~16%). Capping occupancy so
+    Comfort stays at the target instead keeps that risk near 1%.
+
+    Fallback rooms are left uncapped: they are the overflow of last resort,
+    and capping them would leave cats with nowhere to go.
+    """
+    if comfort_target <= 0:
+        return room_configs
+    adjusted: list[RoomConfig] = []
+    for room in room_configs:
+        if not room.room_type.uses_profile:
+            adjusted.append(room)
+            continue
+        if room.min_comfort is not None:
+            # The room carries its own Comfort floor from the Room Priority
+            # panel, which already set max_cats — don't cap it twice.
+            adjusted.append(room)
+            continue
+        cap = comfort_capped_occupancy(room.comfort, comfort_target)
+        limit = cap if room.max_cats is None else min(room.max_cats, cap)
+        adjusted.append(replace(room, max_cats=limit))
+    return adjusted
 
 
 def best_breeding_room_stimulation(room_configs: list[RoomConfig], fallback: float = 50.0) -> float:
@@ -243,10 +373,12 @@ def build_room_configs(
                 RoomConfig(
                     key=key,
                     room_type=room_type,
-                    max_cats=_coerce_room_capacity(entry.get("max_cats", entry.get("capacity")), room_type=room_type),
+                    max_cats=_room_capacity_from_entry(entry, key, room_type, room_stats),
                     base_stim=_room_base_stim(entry, key, room_stats),
                     evolution=_room_effect(key, room_stats, "Evolution"),
                     health=_room_effect(key, room_stats, "Health"),
+                    comfort=_room_effect_signed(key, room_stats, "Comfort"),
+                    min_comfort=_entry_min_comfort(entry),
                 )
             )
         return out
@@ -266,6 +398,7 @@ def build_room_configs(
                 base_stim=_room_base_stim({}, room, room_stats),
                 evolution=_room_effect(room, room_stats, "Evolution"),
                 health=_room_effect(room, room_stats, "Health"),
+                comfort=_room_effect_signed(room, room_stats, "Comfort"),
             )
         )
     return out
@@ -609,6 +742,9 @@ def optimize_room_distribution(
     """
     excluded_keys = excluded_keys or set()
     _cancelled = cancel_check or (lambda: False)
+    # Tighten breeding-room capacity so Comfort stays above the fight-risk
+    # threshold instead of being driven to 0 by a full room.
+    room_configs = apply_comfort_target(room_configs, params.comfort_target)
     filtered_cats = _filter_cats(cats, excluded_keys, params.min_stats)
 
     if not filtered_cats:
@@ -632,6 +768,31 @@ def optimize_room_distribution(
     room_assignments: dict[str, list[Cat]] = {room.key: [] for room in room_configs}
     room_effective_counts: dict[str, int] = {room.key: 0 for room in room_configs}
     assigned_cats: set[int] = set()
+
+    # Cats blocked from breeding (the Alive Cats "excluded" flag / blacklist)
+    # are not breeding candidates, but they still live somewhere — leaving
+    # them wherever they happen to be means they sit in a breeding room
+    # taking up space. Move them into the fallback rooms up front, so the
+    # rest of the assignment sees the capacity they actually consume. They
+    # are placed before pairing but only ever into fallback rooms, which
+    # never select pairs, so they cannot be paired up.
+    blocked_room_configs = [
+        room for room in room_configs if not room.room_type.uses_profile
+    ]
+    blocked_cats = [
+        c for c in cats
+        if c.status == "In House" and c.db_key in excluded_keys
+    ]
+    blocked_placed: list[Cat] = []
+    for _i, _cat in enumerate(blocked_cats):
+        if _place_in_first_fitting_room(
+            _cat, blocked_room_configs, room_assignments,
+            room_effective_counts, assigned_cats, offset=_i,
+        ):
+            blocked_placed.append(_cat)
+    # They are not breeding candidates, so they must not count as assigned
+    # breeding cats in the stats below.
+    assigned_cats.difference_update(c.db_key for c in blocked_placed)
     ey_cats = [c for c in filtered_cats if _has_eternal_youth(c)]
     non_ey_cats = [c for c in filtered_cats if c.db_key not in {c2.db_key for c2 in ey_cats}]
 
@@ -1075,7 +1236,10 @@ def optimize_room_distribution(
                                 break
 
         unassigned = [c for c in non_ey_cats if c.db_key not in assigned_cats]
-        fallback_rooms = [room.key for room in room_configs if not room.room_type.uses_profile] or (room_order[-1:] if room_order else [])
+        _rooms_by_key = {room.key: room for room in room_configs}
+        fallback_room_configs = [
+            room for room in room_configs if not room.room_type.uses_profile
+        ] or [_rooms_by_key[key] for key in (room_order[-1:] if room_order else []) if key in _rooms_by_key]
         # Cats left without a viable pair cannot produce kittens here — most
         # commonly gay cats, whose only high-compatibility partners are
         # same-sex (which mate but yield no kitten). Park them in the
@@ -1117,10 +1281,14 @@ def optimize_room_distribution(
                     break
             if placed_quiet:
                 continue
-            if not fallback_rooms:
-                break
-            room_assignments[fallback_rooms[i % len(fallback_rooms)]].append(cat)
-            assigned_cats.add(cat.db_key)
+            # Overflow into the fallback rooms, still honouring capacity —
+            # overfilling a room is worse than leaving the cat where it is,
+            # and any cat that fits nowhere is surfaced as excluded.
+            if _place_in_first_fitting_room(
+                cat, fallback_room_configs, room_assignments,
+                room_effective_counts, assigned_cats, offset=i,
+            ):
+                continue
 
     if params.use_sa and not _cancelled():
         room_assignments = _run_sa_refinement(

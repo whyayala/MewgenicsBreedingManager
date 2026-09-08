@@ -22,7 +22,7 @@ from mewgenics.constants import (
 from mewgenics.utils.localization import _tr, ROOM_DISPLAY
 from mewgenics.utils.abilities import _planner_trait_name_html, _planner_trait_weight
 from mewgenics.utils.config import (
-    _saved_optimizer_flag, _set_optimizer_flag,
+    _saved_optimizer_flag, _set_optimizer_flag, _saved_optimizer_comfort_target,
     _saved_room_optimizer_auto_recalc,
 )
 from mewgenics.utils.optimizer_settings import (
@@ -1216,6 +1216,7 @@ class RoomOptimizerView(QWidget):
             "ignore_stat_priority": bool(self._ignore_stat_priority_checkbox.isChecked()),
             "send_kittens_to_fallback": bool(self._send_kittens_checkbox.isChecked()) if hasattr(self, "_send_kittens_checkbox") else False,
             "avoid_trait_loss": bool(self._avoid_trait_loss_checkbox.isChecked()) if hasattr(self, "_avoid_trait_loss_checkbox") else False,
+            "comfort_target": _saved_optimizer_comfort_target(),
             "bottom_tab_index": int(self._bottom_tabs.currentIndex()) if hasattr(self, "_bottom_tabs") else 2,
         })
         if use_sa is not None:
