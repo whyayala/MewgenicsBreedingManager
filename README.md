@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.5`
+Current release: `v5.9.6`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -46,7 +46,7 @@ Two views for evaluating which cats to keep, breed, or cull:
 - Configurable room capacity, type (breeding/fallback/general), and stimulation
 - Protects desired disorders from high-Health rooms, and routes cats with unwanted disorders *into* them to be cured
 - Parks cats with no viable pair in the lowest-stimulation room
-- Routes kittens to fallback rooms until they're old enough to breed
+- Routes kittens to the quietest rooms (overflowing to fallback) until they're old enough to breed
 
 ### Perfect 7 Planner
 
@@ -104,6 +104,15 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.6
+
+**Kitten placement.** Kittens are kept out of the breeding rotation more sensibly, and two bugs in the existing routing are fixed.
+
+- **Kittens go to the quietest room, not straight to the fallback.** Fallback rooms tend to be the fight rooms — a poor nursery. Kittens are now placed by stimulation ascending, so the lowest-stimulation room wins and a full nursery overflows into the fallback rather than into a loud breeding room. Ties go to the fallback, since with no stimulation advantage to gain there is no reason to consume a breeding slot.
+- **Fixed: no fallback room configured.** With every room set to a breeding tree there is no fallback, and kittens were placed in whatever room came last in room order — in testing, a stimulation-70 room. They now always take the quietest room available.
+- **Fixed: kitten placement ignored room capacity.** It never updated the occupancy counter, so kittens didn't count against capacity when the remaining cats were assigned and a room could be silently overfilled.
+- The toggle is relabelled **"Kittens to Quiet Rooms"** (both tooltips updated) since "to Fallback" no longer describes the behaviour. It stays off by default.
 
 ### v5.9.5
 
