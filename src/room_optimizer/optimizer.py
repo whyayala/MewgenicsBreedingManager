@@ -202,6 +202,44 @@ def _coerce_room_capacity(value, *, room_type: RoomType) -> int | None:
     return capacity
 
 
+def _entry_min_comfort(entry: dict) -> float | None:
+    """Read the room's Min Comfort setting, or None when it isn't set."""
+    if "min_comfort" not in entry:
+        return None
+    value = entry.get("min_comfort")
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _room_capacity_from_entry(
+    entry: dict,
+    room_key: str,
+    room_type: RoomType,
+    room_stats: dict[str, FurnitureRoomSummary] | None,
+) -> int | None:
+    """Capacity for a room, derived from Min Comfort when it is configured.
+
+    Min Comfort replaces the old hand-computed capacity: the user says how
+    comfortable the room should stay and the occupancy follows from the
+    room's furniture Comfort, rather than making them work out whether a
+    given headcount lands above or below the fight-risk threshold.
+
+    Fallback rooms stay uncapped — they absorb the overflow. Rooms with no
+    Min Comfort fall back to the legacy explicit capacity.
+    """
+    if not room_type.uses_profile:
+        return _coerce_room_capacity(entry.get("max_cats", entry.get("capacity")), room_type=room_type)
+    target = _entry_min_comfort(entry)
+    if target is None:
+        return _coerce_room_capacity(entry.get("max_cats", entry.get("capacity")), room_type=room_type)
+    comfort = _room_effect_signed(room_key, room_stats, "Comfort")
+    return comfort_capped_occupancy(comfort, target)
+
+
 def _room_base_stim(entry: dict, room_key: str, room_stats: dict[str, FurnitureRoomSummary] | None) -> float:
     for key in ("base_stim", "stimulation", "stim"):
         if key not in entry:
@@ -285,6 +323,11 @@ def apply_comfort_target(
         if not room.room_type.uses_profile:
             adjusted.append(room)
             continue
+        if room.min_comfort is not None:
+            # The room carries its own Comfort floor from the Room Priority
+            # panel, which already set max_cats — don't cap it twice.
+            adjusted.append(room)
+            continue
         cap = comfort_capped_occupancy(room.comfort, comfort_target)
         limit = cap if room.max_cats is None else min(room.max_cats, cap)
         adjusted.append(replace(room, max_cats=limit))
@@ -330,11 +373,12 @@ def build_room_configs(
                 RoomConfig(
                     key=key,
                     room_type=room_type,
-                    max_cats=_coerce_room_capacity(entry.get("max_cats", entry.get("capacity")), room_type=room_type),
+                    max_cats=_room_capacity_from_entry(entry, key, room_type, room_stats),
                     base_stim=_room_base_stim(entry, key, room_stats),
                     evolution=_room_effect(key, room_stats, "Evolution"),
                     health=_room_effect(key, room_stats, "Health"),
                     comfort=_room_effect_signed(key, room_stats, "Comfort"),
+                    min_comfort=_entry_min_comfort(entry),
                 )
             )
         return out

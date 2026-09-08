@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.8`
+Current release: `v5.9.9`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,15 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.9
+
+**Rooms are configured by Min Comfort, not capacity.**
+
+- The Room Priority panel's **Capacity** field is now **Min Comfort**: state the Comfort level a room should keep and the optimizer derives the headcount, instead of making you work out whether a capacity lands above or below the fight-risk threshold. Default is **10**.
+- Each room shows a live **"(fits: N)"** hint beside the setting, computed from its current furniture Comfort. Where the target is unreachable the hint explains why and holds the room at the 4 cats that cost no Comfort — the fix there is Comfort furniture.
+- Rationale: Comfort drives the overnight fight roll (`fight_avoidance = 1 - 0.1 x Comfort`, roughly `18.75% - 1.5% x Comfort - 0.48% x average Charisma`). A room filled to its old nominal capacity was a room sitting at Comfort 0 — about a 16% chance of a fight, versus ~1% at Comfort 10.
+- **Migration:** saved room setups reset once to the Comfort-based defaults, because a stored capacity number carries no record of the Comfort it was aiming for. Configs that still carry an explicit capacity keep using it, with the global Comfort target applying on top. Fallback rooms are unaffected — they absorb the overflow and are never Comfort-limited.
 
 ### v5.9.8
 

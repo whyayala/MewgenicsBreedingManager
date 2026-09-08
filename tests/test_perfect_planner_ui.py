@@ -335,17 +335,19 @@ def test_room_optimizer_configure_rooms_prevents_duplicate_room_selection(qt_app
     assert panel._slots[0]["combo"].currentData() == "Floor1_Large"
 
 
-def test_room_optimizer_breeding_rooms_default_to_six_capacity(qt_app):
+def test_room_optimizer_rooms_default_to_min_comfort_ten(qt_app):
+    """Rooms are sized by the Comfort they should keep, not a headcount."""
     panel = mm.RoomPriorityPanel()
     panel._clear_slots()
     panel.set_config([
-        {"room": "Floor1_Large", "type": "breeding", "max_cats": None, "base_stim": 50},
-        {"room": "Attic", "type": "fallback", "max_cats": None, "base_stim": 50},
+        {"room": "Floor1_Large", "type": "breeding", "base_stim": 50},
+        {"room": "Attic", "type": "fallback", "base_stim": 50},
     ])
     qt_app.processEvents()
 
-    assert panel._slots[0]["cap_spin"].value() == 6
-    assert panel._slots[1]["cap_spin"].value() == 0
+    assert panel._slots[0]["cap_spin"].value() == 10
+    # Fallback rooms carry the setting but ignore it — they take the overflow.
+    assert panel._slots[1]["cap_spin"].value() == 10
 
 
 def test_room_optimizer_default_room_order_matches_optimizer_layout():
@@ -364,7 +366,7 @@ def test_room_optimizer_default_room_order_matches_optimizer_layout():
         "best_pairs",
         "fallback",
     ]
-    assert [slot["max_cats"] for slot in default_config] == [10, 10, 10, 10, None]
+    assert [slot["min_comfort"] for slot in default_config] == [10, 10, 10, 10, None]
 
 
 def test_room_optimizer_places_setup_between_rooms_and_pairs(qt_app, planner_config):
@@ -1322,11 +1324,11 @@ def test_room_optimizer_global_state_wins_over_stale_save_state(qt_app, planner_
     mm._save_planner_state_value(
         "room_priority_config",
         [
-            {"room": "Floor1_Large", "type": "fallback", "max_cats": 3, "base_stim": 88.0},
-            {"room": "Floor1_Small", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Floor2_Small", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Floor2_Large", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Attic", "type": "fallback", "max_cats": 0, "base_stim": 50.0},
+            {"room": "Floor1_Large", "type": "fallback", "min_comfort": 3, "base_stim": 88.0},
+            {"room": "Floor1_Small", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Floor2_Small", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Floor2_Large", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Attic", "type": "fallback", "min_comfort": 0, "base_stim": 50.0},
         ],
         None,
     )
@@ -1345,11 +1347,11 @@ def test_room_optimizer_global_state_wins_over_stale_save_state(qt_app, planner_
             "use_sa": True,
         },
         "room_priority_config": [
-            {"room": "Floor1_Large", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Floor1_Small", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Floor2_Small", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Floor2_Large", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Attic", "type": "fallback", "max_cats": 0, "base_stim": 50.0},
+            {"room": "Floor1_Large", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Floor1_Small", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Floor2_Small", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Floor2_Large", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Attic", "type": "fallback", "min_comfort": 0, "base_stim": 50.0},
         ],
     }
     Path(str(save_path) + ".planner_state.json").write_text(json.dumps(stale_blob, indent=2, sort_keys=True), encoding="utf-8")
@@ -1397,11 +1399,11 @@ def test_room_optimizer_save_state_is_mirrored_back_to_app_config_on_load(qt_app
             "use_sa": False,
         },
         "room_priority_config": [
-            {"room": "Floor1_Large", "type": "fallback", "max_cats": 3, "base_stim": 88.0},
-            {"room": "Floor1_Small", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Floor2_Small", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Floor2_Large", "type": "best_pairs", "max_cats": 6, "base_stim": 50.0},
-            {"room": "Attic", "type": "fallback", "max_cats": 0, "base_stim": 50.0},
+            {"room": "Floor1_Large", "type": "fallback", "min_comfort": 3, "base_stim": 88.0},
+            {"room": "Floor1_Small", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Floor2_Small", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Floor2_Large", "type": "best_pairs", "min_comfort": 6, "base_stim": 50.0},
+            {"room": "Attic", "type": "fallback", "min_comfort": 0, "base_stim": 50.0},
         ],
     }
     Path(str(save_path) + ".planner_state.json").write_text(json.dumps(stale_blob, indent=2, sort_keys=True), encoding="utf-8")
@@ -1418,11 +1420,11 @@ def test_room_optimizer_save_state_is_mirrored_back_to_app_config_on_load(qt_app
 
 def test_room_priority_available_room_refresh_does_not_clobber_saved_config(planner_config):
     initial_config = [
-        {"room": "Floor1_Large", "type": "best_pairs", "max_cats": 10, "base_stim": 50.0},
-        {"room": "Floor1_Small", "type": "best_pairs", "max_cats": 10, "base_stim": 50.0},
-        {"room": "Floor2_Small", "type": "best_pairs", "max_cats": 10, "base_stim": 50.0},
-        {"room": "Floor2_Large", "type": "best_pairs", "max_cats": 10, "base_stim": 50.0},
-        {"room": "Attic", "type": "fallback", "max_cats": 0, "base_stim": 50.0},
+        {"room": "Floor1_Large", "type": "best_pairs", "min_comfort": 10, "base_stim": 50.0},
+        {"room": "Floor1_Small", "type": "best_pairs", "min_comfort": 10, "base_stim": 50.0},
+        {"room": "Floor2_Small", "type": "best_pairs", "min_comfort": 10, "base_stim": 50.0},
+        {"room": "Floor2_Large", "type": "best_pairs", "min_comfort": 10, "base_stim": 50.0},
+        {"room": "Attic", "type": "fallback", "min_comfort": 0, "base_stim": 50.0},
     ]
     mm._save_planner_state_value("room_priority_config", initial_config, None)
 
@@ -1431,7 +1433,7 @@ def test_room_priority_available_room_refresh_does_not_clobber_saved_config(plan
 
     panel.set_available_rooms(["Attic"])
     assert panel.get_config() == [
-        {"room": "Attic", "type": "best_pairs", "max_cats": 10, "base_stim": 50.0},
+        {"room": "Attic", "type": "best_pairs", "min_comfort": 10, "base_stim": 50.0},
     ]
     persisted = mm._load_planner_state_value("room_priority_config", [], None)
     assert [slot["room"] for slot in persisted] == [slot["room"] for slot in initial_config]
@@ -1450,7 +1452,7 @@ def test_flush_persistent_view_state_saves_room_optimizer_on_exit(planner_config
             calls.append("room_optimizer")
 
         def get_room_config(self):
-            return [{"room": "Attic", "type": "fallback", "max_cats": 0, "base_stim": 50.0}]
+            return [{"room": "Attic", "type": "fallback", "min_comfort": 0, "base_stim": 50.0}]
 
     class _PlainView:
         def __init__(self, name):
@@ -1478,7 +1480,7 @@ def test_flush_persistent_view_state_saves_room_optimizer_on_exit(planner_config
 
     assert calls == ["room_optimizer", "perfect_planner", "mutation_planner", "furniture"]
     assert captured["save_path"] == "save-one.mewsav"
-    assert captured["config"] == [{"room": "Attic", "type": "fallback", "max_cats": 0, "base_stim": 50.0}]
+    assert captured["config"] == [{"room": "Attic", "type": "fallback", "min_comfort": 0, "base_stim": 50.0}]
 
 
 def test_room_optimizer_uses_shared_sa_settings_when_calculating(qt_app, planner_config, monkeypatch):

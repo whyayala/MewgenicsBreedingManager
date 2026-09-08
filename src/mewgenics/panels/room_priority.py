@@ -27,6 +27,15 @@ from mewgenics.utils.optimizer_settings import (
 from mewgenics.utils.planner_state import ROOM_OPTIMIZER_MODES, _mutation_class_label
 
 
+DEFAULT_MIN_COMFORT = 10
+"""Comfort level rooms default to holding.
+
+Comfort drives the overnight fight roll (about 16% chance of a fight at
+Comfort 0 versus roughly 1% at Comfort 10), so rooms are sized to stay here
+rather than being filled until Comfort reaches 0.
+"""
+
+
 class RoomPriorityPanel(QWidget):
     """Compact vertical panel for ordering rooms by optimizer mode."""
     configChanged = Signal()
@@ -208,6 +217,7 @@ class RoomPriorityPanel(QWidget):
         slot_type: str = "best_pairs",
         emit: bool = True,
         max_cats: int | None = None,
+        min_comfort: float | None = None,
         base_stim: float | None = None,
     ):
         choices = self._room_choices()
@@ -266,29 +276,46 @@ class RoomPriorityPanel(QWidget):
         pairs_lbl.setStyleSheet("color:#ddd; font-size:11px;")
         row.addWidget(pairs_lbl)
 
-        cap_lbl = QLabel("Capacity")
+        cap_lbl = QLabel("Min Comfort")
         cap_lbl.setStyleSheet("color:#777; font-size:11px; font-weight:bold;")
         row.addWidget(cap_lbl)
 
         cap_spin = QSpinBox()
-        cap_spin.setRange(0, 50)
-        cap_spin.setSpecialValueText("∞")
+        cap_spin.setRange(-20, 50)
         cap_spin.setFixedWidth(66)
         cap_spin.setMinimumWidth(66)
         cap_spin.setStyleSheet(
             "QSpinBox { background:#0d0d1c; color:#ccc; border:1px solid #2a2a4a;"
             " border-radius:3px; padding:2px 4px; font-size:11px; }"
         )
-        cap_spin.setToolTip(_tr("room_priority.capacity.tooltip", default="Maximum cats allowed in this room. 0 means unlimited."))
-        if max_cats is not None:
-            capacity = max_cats
-        else:
-            capacity = 6 if slot_type != "fallback" else 0
+        cap_spin.setToolTip(_tr(
+            "room_priority.min_comfort.tooltip",
+            default=(
+                "Lowest room Comfort to allow, which sets how many cats fit.\n"
+                "Comfort drops 1 per cat above 4 and drives the overnight "
+                "fight roll:\nabout a 16% chance of a fight at Comfort 0 "
+                "versus roughly 1% at Comfort 10.\n"
+                "Fallback rooms ignore this — they take the overflow."
+            ),
+        ))
+        if min_comfort is None:
+            # Legacy configs stored a hand-computed capacity instead; there is
+            # no way to recover the Comfort they were aiming for, so start
+            # them at the default.
+            min_comfort = DEFAULT_MIN_COMFORT
         try:
-            cap_spin.setValue(max(0, int(capacity)))
+            cap_spin.setValue(int(round(float(min_comfort))))
         except (TypeError, ValueError):
-            cap_spin.setValue(6 if slot_type != "fallback" else 0)
+            cap_spin.setValue(DEFAULT_MIN_COMFORT)
         row.addWidget(cap_spin)
+
+        fit_lbl = QLabel("(fits: —)")
+        fit_lbl.setStyleSheet("color:#5a607a; font-size:11px;")
+        fit_lbl.setToolTip(_tr(
+            "room_priority.fits.tooltip",
+            default="How many cats this room holds at the chosen Min Comfort, based on its current furniture.",
+        ))
+        row.addWidget(fit_lbl)
 
         stim_lbl = QLabel("Stim")
         stim_lbl.setStyleSheet("color:#777; font-size:11px; font-weight:bold;")
@@ -344,6 +371,7 @@ class RoomPriorityPanel(QWidget):
             "mode_combo": mode_combo,
             "pairs_lbl": pairs_lbl,
             "cap_spin": cap_spin,
+            "fit_lbl": fit_lbl,
             "stim_spin": stim_spin,
             "calc_lbl": calc_lbl,
             "up_btn": up_btn,
@@ -372,16 +400,15 @@ class RoomPriorityPanel(QWidget):
 
         def _on_mode_changed(_index, _s=slot):
             selected_mode = _s["mode_combo"].currentData()
-            if selected_mode == "fallback" and _s["cap_spin"].value() == 6:
-                _s["cap_spin"].setValue(0)
-            elif selected_mode != "fallback" and _s["cap_spin"].value() == 0:
-                _s["cap_spin"].setValue(6)
+            # Fallback rooms ignore Min Comfort (they absorb the overflow),
+            # so there is nothing to switch when the mode changes.
             self._refresh_fallback_feedback()
+            self.refresh_fit_labels()
             self._on_changed()
 
         mode_combo.currentIndexChanged.connect(_on_mode_changed)
-        combo.currentIndexChanged.connect(lambda _: (_update_swatch(), self._update_expected_pairs_label(slot), self._refresh_room_choices(), self._on_changed()))
-        cap_spin.valueChanged.connect(lambda _: self._on_changed())
+        combo.currentIndexChanged.connect(lambda _: (_update_swatch(), self._update_expected_pairs_label(slot), self._refresh_room_choices(), self.refresh_fit_labels(), self._on_changed()))
+        cap_spin.valueChanged.connect(lambda _, _s=None: (self.refresh_fit_labels(), self._on_changed()))
         stim_spin.valueChanged.connect(lambda _: self._on_changed())
         up_btn.clicked.connect(lambda checked=False, _s=slot: self._move(-1, _s))
         dn_btn.clicked.connect(lambda checked=False, _s=slot: self._move(+1, _s))
@@ -456,12 +483,61 @@ class RoomPriorityPanel(QWidget):
             _save_room_priority_config(self.get_config(), self._save_path)
         self.configChanged.emit()
 
+    def _refresh_fit_label(self, slot: dict, summary=None):
+        """Show how many cats the room holds at the chosen Min Comfort."""
+        fit_lbl = slot.get("fit_lbl")
+        if fit_lbl is None:
+            return
+        room = slot["combo"].currentData()
+        if summary is None:
+            summary = self._room_stats.get(room)
+        mode = slot["mode_combo"].currentData() or "best_pairs"
+        if mode == "fallback":
+            fit_lbl.setText("(fits: ∞)")
+            fit_lbl.setToolTip(_tr(
+                "room_priority.fits_fallback.tooltip",
+                default="Fallback rooms take the overflow, so they are not limited by Comfort.",
+            ))
+            return
+        if summary is None:
+            fit_lbl.setText("(fits: —)")
+            return
+        from room_optimizer.optimizer import comfort_capped_occupancy
+        try:
+            comfort = float(summary.raw_effects.get("Comfort", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            comfort = 0.0
+        target = float(slot["cap_spin"].value())
+        fits = comfort_capped_occupancy(comfort, target)
+        fit_lbl.setText(f"(fits: {fits})")
+        reachable = comfort - max(0, fits - 4) >= target
+        if reachable:
+            fit_lbl.setToolTip(_tr(
+                "room_priority.fits_value.tooltip",
+                default="Room Comfort is {comfort:g}; {fits} cats keeps it at {target:g}.",
+                comfort=comfort, fits=fits, target=target,
+            ))
+        else:
+            fit_lbl.setToolTip(_tr(
+                "room_priority.fits_unreachable.tooltip",
+                default=(
+                    "Room Comfort is only {comfort:g}, so it cannot reach {target:g} "
+                    "at any occupancy. Showing the 4 cats that cost no Comfort — "
+                    "add Comfort furniture to fit more."
+                ),
+                comfort=comfort, target=target,
+            ))
+
+    def refresh_fit_labels(self):
+        for slot in self._slots:
+            self._refresh_fit_label(slot)
+
     def get_config(self) -> list[dict]:
         return [
             {
                 "room": s["combo"].currentData(),
                 "type": s["mode_combo"].currentData() or "best_pairs",
-                "max_cats": int(s["cap_spin"].value()),
+                "min_comfort": int(s["cap_spin"].value()),
                 "base_stim": float(s["stim_spin"].value()),
             }
             for s in self._slots
@@ -475,6 +551,7 @@ class RoomPriorityPanel(QWidget):
                 slot.get("type", "best_pairs"),
                 emit=False,
                 max_cats=slot.get("max_cats", slot.get("capacity")),
+                min_comfort=slot.get("min_comfort"),
                 base_stim=slot.get("base_stim", slot.get("stimulation")),
             )
         self._trim_excess_slots()
@@ -523,12 +600,14 @@ class RoomPriorityPanel(QWidget):
             if summary is None:
                 slot["calc_lbl"].setText("(calc: —)")
                 slot["calc_lbl"].setToolTip(_tr("room_priority.calc_stim.tooltip", default="Calculated from the room's current furniture."))
+                slot["fit_lbl"].setText("(fits: —)")
                 continue
             stim = max(0, min(200, int(round(float(summary.raw_effects.get("Stimulation", 0.0) or 0.0)))))
             slot["calc_lbl"].setText(f"(calc: {stim})")
             slot["calc_lbl"].setToolTip(
                 _tr("room_priority.calc_stim_value.tooltip", default="Calculated stimulation from furniture: {stim}", stim=stim)
             )
+            self._refresh_fit_label(slot, summary)
 
         self.configChanged.emit()
 

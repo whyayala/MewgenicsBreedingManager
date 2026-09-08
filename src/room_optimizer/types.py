@@ -46,6 +46,10 @@ class RoomConfig:
     # stays above the fight-risk threshold (see OptimizationParams.
     # comfort_target).
     comfort: float = 0.0
+    # Per-room Comfort floor set in the Room Priority panel. When present it
+    # already determined max_cats, so the global comfort_target does not
+    # apply on top. None means "not configured — use the global target".
+    min_comfort: float | None = None
 
     @property
     def display_name(self) -> str:

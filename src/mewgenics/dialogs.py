@@ -815,11 +815,10 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "The Room Optimizer no longer fills rooms to the brim. A room's nominal capacity is the point where its Comfort reaches 0 — which is also where the overnight fight chance peaks at roughly 16%. Breeding rooms are now capped at whatever keeps Comfort at 10, where the fight chance is about 1%.",
-            "On a real save the difference is large: two rooms sitting at 11-13% fight risk with 24-25 cats drop to about 1% at 17 cats, and an over-stuffed low-Comfort room fell from roughly 27% to 7%.",
-            "If a room can't reach Comfort 10 even when nearly empty, it is held at the four cats that cost no Comfort — the optimizer can limit crowding but can't create Comfort, so add Comfort furniture there. Fallback rooms stay uncapped on purpose, as the overflow of last resort.",
-            "Cats you have blocked from breeding are now moved to the fallback room instead of being left where they were, and room capacity is a real limit — cats that fit nowhere are listed under \"Excluded\" rather than being crammed in.",
-            "The Comfort target is configurable via optimizer_flags.comfort_target in the app config; set it to 0 to go back to raw room capacity.",
+            "Rooms are now configured by Min Comfort instead of capacity. Set each room to the Comfort you want it to keep — 10 is the default — and the optimizer works out how many cats fit, instead of you doing the math to check whether a headcount lands above or below the threshold.",
+            "Each room shows a live \"(fits: N)\" hint next to the setting, so you can see the headcount your Comfort floor produces. If a room's furniture Comfort is too low to reach the target at all, the hint says so and holds it at the 4 cats that cost no Comfort — that room needs Comfort furniture.",
+            "Why it matters: Comfort drives the overnight fight roll — roughly a 16% chance of a fight at Comfort 0 versus about 1% at Comfort 10. A room filled to its old \"capacity\" was a room sitting at Comfort 0.",
+            "Existing room setups reset once to the new Comfort-based defaults, since a saved capacity number can't tell us what Comfort you were aiming for. Fallback rooms are unaffected — they still take the overflow.",
         ]
 
         root = QVBoxLayout(self)

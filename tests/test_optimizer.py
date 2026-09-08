@@ -1053,3 +1053,80 @@ def test_optimizer_respects_comfort_cap_end_to_end():
     assert len(breeding.cats) <= 8, len(breeding.cats)
     # Everyone still has a home, thanks to the uncapped fallback.
     assert sum(len(a.cats) for a in result.rooms) == 20
+
+
+def _comfort_stats(**rooms):
+    from save_parser import FurnitureRoomSummary
+    return {
+        room: FurnitureRoomSummary(
+            room=room, cat_count=0, furniture_count=1, items=(),
+            raw_effects={"Comfort": float(comfort), "Stimulation": 50.0},
+            effective_effects={}, all_effects={},
+        )
+        for room, comfort in rooms.items()
+    }
+
+
+def test_min_comfort_derives_room_capacity():
+    """Min Comfort replaces the hand-computed capacity: the user states the
+    Comfort floor and occupancy follows from the room's furniture."""
+    stats = _comfort_stats(Floor1_Large=23.0, Floor2_Large=6.0)
+    configs = {
+        c.key: c for c in build_room_configs(
+            [
+                {"room": "Floor1_Large", "type": "best_pairs", "min_comfort": 10},
+                {"room": "Floor2_Large", "type": "best_pairs", "min_comfort": 10},
+            ],
+            available_rooms=["Floor1_Large", "Floor2_Large"],
+            room_stats=stats,
+        )
+    }
+    # Comfort 23 - (17 - 4) = 10
+    assert configs["Floor1_Large"].max_cats == 17
+    # Comfort 6 can never reach 10, so only the 4 free cats are allowed.
+    assert configs["Floor2_Large"].max_cats == 4
+
+
+def test_min_comfort_zero_allows_filling_to_zero_comfort():
+    stats = _comfort_stats(Floor1_Large=23.0)
+    cfg = build_room_configs(
+        [{"room": "Floor1_Large", "type": "best_pairs", "min_comfort": 0}],
+        available_rooms=["Floor1_Large"], room_stats=stats,
+    )[0]
+    assert cfg.max_cats == 27  # Comfort hits 0 at 27 cats
+
+
+def test_fallback_rooms_ignore_min_comfort():
+    stats = _comfort_stats(Attic=25.0)
+    cfg = build_room_configs(
+        [{"room": "Attic", "type": "fallback", "min_comfort": 10}],
+        available_rooms=["Attic"], room_stats=stats,
+    )[0]
+    assert cfg.max_cats is None
+
+
+def test_legacy_capacity_config_still_honoured():
+    """Configs saved before Min Comfort existed keep their explicit capacity,
+    with the global comfort target still applying on top."""
+    from room_optimizer.optimizer import apply_comfort_target
+    stats = _comfort_stats(Floor1_Large=23.0)
+    cfg = build_room_configs(
+        [{"room": "Floor1_Large", "type": "best_pairs", "max_cats": 20}],
+        available_rooms=["Floor1_Large"], room_stats=stats,
+    )[0]
+    assert cfg.max_cats == 20
+    assert cfg.min_comfort is None
+    assert apply_comfort_target([cfg], 10.0)[0].max_cats == 17
+
+
+def test_per_room_min_comfort_not_capped_twice():
+    """A room carrying its own Comfort floor must not also be squeezed by the
+    global comfort_target."""
+    from room_optimizer.optimizer import apply_comfort_target
+    stats = _comfort_stats(Floor1_Large=23.0)
+    cfg = build_room_configs(
+        [{"room": "Floor1_Large", "type": "best_pairs", "min_comfort": 4}],
+        available_rooms=["Floor1_Large"], room_stats=stats,
+    )[0]
+    assert cfg.max_cats == 23  # Comfort 23 - (23-4) = 4
+    assert apply_comfort_target([cfg], 10.0)[0].max_cats == 23

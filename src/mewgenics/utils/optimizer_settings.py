@@ -14,7 +14,7 @@ from mewgenics.utils.planner_state import (
 
 
 _OPTIMIZER_SEARCH_SETTINGS_KEY = "optimizer_search_settings"
-_ROOM_CONFIG_VERSION = 3  # bump to force all users back to defaults
+_ROOM_CONFIG_VERSION = 4  # bump to force all users back to defaults
 _OPTIMIZER_SEARCH_DEFAULTS = {
     "temperature": 8.0,
     "neighbors": 120,
@@ -64,14 +64,24 @@ def _saved_optimizer_search_neighbors(default: int | None = None) -> int:
 
 # ── Room priority config ─────────────────────────────────────────────────────
 
+DEFAULT_MIN_COMFORT = 10
+"""Comfort level breeding rooms are sized to keep (see RoomPriorityPanel)."""
+
+
 def _default_room_priority_config() -> list[dict]:
-    """Default room priority: all rooms as Best Pairs, last one as Fallback."""
+    """Default room priority: all rooms as Best Pairs, last one as Fallback.
+
+    Breeding rooms default to a Comfort floor of 10 rather than a headcount:
+    Comfort drives the overnight fight roll, so sizing rooms by the Comfort
+    they should keep beats guessing a capacity. Fallback rooms absorb the
+    overflow and are not Comfort-limited.
+    """
     keys = list(ROOM_KEYS)
     return [
         {
             "room": k,
             "type": "best_pairs" if i < len(keys) - 1 else "fallback",
-            "max_cats": 10 if i < len(keys) - 1 else None,
+            "min_comfort": DEFAULT_MIN_COMFORT if i < len(keys) - 1 else None,
         }
         for i, k in enumerate(keys)
     ]
@@ -93,17 +103,33 @@ def _normalize_room_priority_config(config: list[dict]) -> tuple[list[dict], boo
         if room in seen_rooms:
             continue  # deduplicate — keep first occurrence only
         seen_rooms.add(room)
-        normalized.append({
+        entry = {
             "room": room,
             "type": slot_type,
-            "max_cats": slot.get("max_cats", slot.get("capacity")),
             "base_stim": slot.get("base_stim", slot.get("stimulation")),
-        })
+        }
+        # Rooms are sized by the Comfort they should keep. Legacy configs
+        # instead carried an explicit capacity; keep that key so nothing is
+        # silently discarded, but Min Comfort takes precedence when present.
+        if "min_comfort" in slot:
+            entry["min_comfort"] = slot.get("min_comfort")
+        else:
+            entry["max_cats"] = slot.get("max_cats", slot.get("capacity"))
+        normalized.append(entry)
 
     migrated = False
     for slot in normalized:
-        if slot["type"] != "fallback" and slot.get("max_cats") in (None, ""):
-            slot["max_cats"] = 10
+        if slot["type"] == "fallback":
+            continue
+        if "min_comfort" in slot:
+            if slot.get("min_comfort") in (None, ""):
+                slot["min_comfort"] = DEFAULT_MIN_COMFORT
+                migrated = True
+        elif slot.get("max_cats") in (None, ""):
+            # Legacy slot with no capacity at all — adopt the Comfort floor
+            # rather than inventing a headcount.
+            slot.pop("max_cats", None)
+            slot["min_comfort"] = DEFAULT_MIN_COMFORT
             migrated = True
 
     default_order = list(ROOM_KEYS)
@@ -112,18 +138,19 @@ def _normalize_room_priority_config(config: list[dict]) -> tuple[list[dict], boo
         and [slot["room"] for slot in normalized] == default_order
         and all(slot["type"] == ("best_pairs" if idx < len(default_order) - 1 else "fallback") for idx, slot in enumerate(normalized))
         and all(
-            slot.get("max_cats") in (None, "", 0)
+            slot.get("max_cats") in (None, "", 0) and "min_comfort" not in slot
             for slot in normalized
         )
     )
     if default_like:
         for slot in normalized:
+            slot.pop("max_cats", None)
             if slot["type"] != "fallback":
-                if slot.get("max_cats") != 10:
-                    slot["max_cats"] = 10
+                if slot.get("min_comfort") != DEFAULT_MIN_COMFORT:
+                    slot["min_comfort"] = DEFAULT_MIN_COMFORT
                     migrated = True
-            elif slot.get("max_cats") is not None:
-                slot["max_cats"] = None
+            elif slot.get("min_comfort") is not None:
+                slot["min_comfort"] = None
                 migrated = True
     return normalized, migrated
 
@@ -187,12 +214,18 @@ def _save_room_priority_config(config: list[dict], save_path: Optional[str] = No
             if room in seen_rooms:
                 continue  # deduplicate
             seen_rooms.add(room)
-            cleaned.append({
+            entry = {
                 "room": room,
                 "type": slot_type,
-                "max_cats": slot.get("max_cats", slot.get("capacity")),
                 "base_stim": slot.get("base_stim", slot.get("stimulation")),
-            })
+            }
+            # Rooms are sized by Min Comfort; only fall back to the legacy
+            # explicit capacity for configs that predate it.
+            if "min_comfort" in slot:
+                entry["min_comfort"] = slot.get("min_comfort")
+            else:
+                entry["max_cats"] = slot.get("max_cats", slot.get("capacity"))
+            cleaned.append(entry)
         _save_planner_state_value("room_priority_config", cleaned, save_path=save_path)
         _save_planner_state_value("room_priority_config_version", _ROOM_CONFIG_VERSION, save_path=save_path)
     except Exception:
