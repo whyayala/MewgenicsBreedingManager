@@ -815,11 +815,10 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Big breeding correction: same-sex pairs mate but produce NO kitten — they raise the Gay Stray chance instead. The app used to score them as productive breeding pairs (233 of them in a real 93-cat house), so the Room Optimizer would fill breeding rooms with pairs that can never produce and the planners could route breeding chains through them.",
-            "Gay females and gay males are not equivalent breeding stock. Every opposite-sex attempt is gated by the mother's sexuality, so a gay female can only produce kittens with a neutral (ditto) cat, while a gay male fathers kittens with straight females normally. Detailed Scoring now has separate \"Gay male\" and \"Gay female\" weights — existing profiles keep their old value on both until you change them.",
-            "Neutral (ditto) cats now correctly ignore BOTH cats' orientations, which is what makes them a gay cat's only productive partner.",
-            "Room Optimizer placement: cats with no viable pair are parked in the lowest-stimulation room instead of the fallback, and cats carrying a disorder that no breeding tree wants now go to the highest-Health room so the Health effect can cure it away (Must Breed cats are left alone).",
-            "Your pair recommendations will shift after this update — that is expected, and the reasons above are why.",
+            "Kittens are now sent to the quietest room instead of straight to the fallback. Fallback rooms tend to be the fight rooms, which is a poor nursery — kittens go to the lowest-stimulation room first and only overflow into the fallback when it is full.",
+            "Fixed: with every room set to a breeding tree there is no fallback room, and kittens were landing in whatever room happened to come last in room order — often the highest-stimulation one. They now always go to the quietest room available.",
+            "Fixed: kitten placement wasn't counting against room capacity, so a room could be silently overfilled when the rest of the cats were assigned.",
+            "The toggle is now called \"Kittens to Quiet Rooms\" to match what it does. It remains off by default — turn it on in the Room Optimizer if you want kittens kept out of the breeding rotation.",
         ]
 
         root = QVBoxLayout(self)
