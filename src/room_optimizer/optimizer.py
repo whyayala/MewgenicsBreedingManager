@@ -142,6 +142,35 @@ def _universally_undesired_disorders(cat: Cat, mode_profiles: dict[str, dict]) -
     return sorted(negative - positive)
 
 
+def _place_in_first_fitting_room(
+    cat: Cat,
+    rooms: list[RoomConfig],
+    room_assignments: dict[str, list[Cat]],
+    room_effective_counts: dict[str, int],
+    assigned_cats: set[int],
+    *,
+    offset: int = 0,
+) -> bool:
+    """Place *cat* in the first room from *rooms* that has capacity.
+
+    Rooms are tried starting at ``offset`` so successive cats spread across
+    equally-suitable rooms instead of packing the first one. Returns False
+    when no room has room left, leaving the cat unassigned rather than
+    overfilling — the caller reports those as excluded.
+    """
+    if not rooms:
+        return False
+    count = len(rooms)
+    for step in range(count):
+        room = rooms[(offset + step) % count]
+        if _can_fit_single(room, room_effective_counts.get(room.key, 0), cat):
+            room_assignments[room.key].append(cat)
+            room_effective_counts[room.key] = room_effective_counts.get(room.key, 0) + 1
+            assigned_cats.add(cat.db_key)
+            return True
+    return False
+
+
 def _filter_cats(cats: list[Cat], excluded_keys: set[int], min_stats: int) -> list[Cat]:
     return [
         c
@@ -695,6 +724,31 @@ def optimize_room_distribution(
     room_assignments: dict[str, list[Cat]] = {room.key: [] for room in room_configs}
     room_effective_counts: dict[str, int] = {room.key: 0 for room in room_configs}
     assigned_cats: set[int] = set()
+
+    # Cats blocked from breeding (the Alive Cats "excluded" flag / blacklist)
+    # are not breeding candidates, but they still live somewhere — leaving
+    # them wherever they happen to be means they sit in a breeding room
+    # taking up space. Move them into the fallback rooms up front, so the
+    # rest of the assignment sees the capacity they actually consume. They
+    # are placed before pairing but only ever into fallback rooms, which
+    # never select pairs, so they cannot be paired up.
+    blocked_room_configs = [
+        room for room in room_configs if not room.room_type.uses_profile
+    ]
+    blocked_cats = [
+        c for c in cats
+        if c.status == "In House" and c.db_key in excluded_keys
+    ]
+    blocked_placed: list[Cat] = []
+    for _i, _cat in enumerate(blocked_cats):
+        if _place_in_first_fitting_room(
+            _cat, blocked_room_configs, room_assignments,
+            room_effective_counts, assigned_cats, offset=_i,
+        ):
+            blocked_placed.append(_cat)
+    # They are not breeding candidates, so they must not count as assigned
+    # breeding cats in the stats below.
+    assigned_cats.difference_update(c.db_key for c in blocked_placed)
     ey_cats = [c for c in filtered_cats if _has_eternal_youth(c)]
     non_ey_cats = [c for c in filtered_cats if c.db_key not in {c2.db_key for c2 in ey_cats}]
 
@@ -1138,7 +1192,10 @@ def optimize_room_distribution(
                                 break
 
         unassigned = [c for c in non_ey_cats if c.db_key not in assigned_cats]
-        fallback_rooms = [room.key for room in room_configs if not room.room_type.uses_profile] or (room_order[-1:] if room_order else [])
+        _rooms_by_key = {room.key: room for room in room_configs}
+        fallback_room_configs = [
+            room for room in room_configs if not room.room_type.uses_profile
+        ] or [_rooms_by_key[key] for key in (room_order[-1:] if room_order else []) if key in _rooms_by_key]
         # Cats left without a viable pair cannot produce kittens here — most
         # commonly gay cats, whose only high-compatibility partners are
         # same-sex (which mate but yield no kitten). Park them in the
@@ -1180,10 +1237,14 @@ def optimize_room_distribution(
                     break
             if placed_quiet:
                 continue
-            if not fallback_rooms:
-                break
-            room_assignments[fallback_rooms[i % len(fallback_rooms)]].append(cat)
-            assigned_cats.add(cat.db_key)
+            # Overflow into the fallback rooms, still honouring capacity —
+            # overfilling a room is worse than leaving the cat where it is,
+            # and any cat that fits nowhere is surfaced as excluded.
+            if _place_in_first_fitting_room(
+                cat, fallback_room_configs, room_assignments,
+                room_effective_counts, assigned_cats, offset=i,
+            ):
+                continue
 
     if params.use_sa and not _cancelled():
         room_assignments = _run_sa_refinement(

@@ -217,6 +217,15 @@ class RoomOptimizerWorker(QThread):
                 "is_fallback": room.room_type == RoomType.FALLBACK,
             })
 
+        # Cats the optimizer could not place (every room at capacity) must be
+        # reported too, otherwise they silently disappear from the results
+        # now that rooms are no longer overfilled.
+        _reported = {c.db_key for c in excluded_cats}
+        for _c in optimized.excluded_cats:
+            if _c.db_key not in _reported:
+                excluded_cats.append(_c)
+                _reported.add(_c.db_key)
+
         excluded_rows = [
             {
                 "name": f"{c.name} ({c.gender_display})",
