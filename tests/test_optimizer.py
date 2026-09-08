@@ -433,10 +433,12 @@ def test_no_fallback_room_does_not_hang():
         gender = "male" if i % 2 == 0 else "female"
         cats.append(_make_cat(i + 1, gender=gender, sexuality="bi", stat_seed=5))
 
-    # All rooms are breeding rooms with cap 6 — only 12 cats fit, 28 overflow
+    # All rooms are breeding rooms with cap 6 — only 12 cats fit, 28 overflow.
+    # Comfort 12 lets all 6 slots be used while still holding Comfort at the
+    # default target of 10; this test is about the DP cap, not about Comfort.
     room_configs = [
-        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0),
-        RoomConfig("Floor1_Small", RoomType.BREEDING, 6, 50.0),
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0, comfort=12.0),
+        RoomConfig("Floor1_Small", RoomType.BREEDING, 6, 50.0, comfort=12.0),
     ]
     start = time.monotonic()
     result = optimize_room_distribution(
@@ -465,8 +467,10 @@ def test_greedy_fallback_produces_reasonable_pairs():
         gender = "male" if i % 2 == 0 else "female"
         cats.append(_make_cat(i + 1, gender=gender, sexuality="bi", stat_seed=6))
 
+    # Comfort 34 keeps all 28 cats in one room at the default Comfort target
+    # of 10 — this test is about greedy pair selection, not about Comfort.
     room_configs = [
-        RoomConfig("Floor1_Large", RoomType.BREEDING, None, 50.0),
+        RoomConfig("Floor1_Large", RoomType.BREEDING, None, 50.0, comfort=34.0),
     ]
     result = optimize_room_distribution(
         cats,

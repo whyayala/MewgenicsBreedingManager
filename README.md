@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.7`
+Current release: `v5.9.8`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,18 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.8
+
+**Rooms are capped by Comfort, not by nominal capacity.**
+
+A room's capacity is effectively the point where its Comfort hits 0 (Comfort drops 1 per cat above 4) — and Comfort drives the overnight fight roll: `fight_avoidance = 1 - 0.1 x Comfort`, which the community approximates as `18.75% - 1.5% x Comfort - 0.48% x average Charisma`. So a "full" room carries roughly a **16% chance of a fight**, while Comfort 10 sits near **1%**. Filling a room to capacity was therefore the worst thing the optimizer could do.
+
+- Breeding-room occupancy is now capped at `Comfort - target + 4`, holding post-crowding Comfort at the target (default **10**). Your own capacity setting still applies as an upper bound — the cap only ever tightens it.
+- Measured on a real save: two rooms holding 24-25 cats at 11-13% fight risk drop to 17 cats at ~1%, and a low-Comfort room stuffed with 17 cats falls from ~27% to ~7%.
+- A room whose furniture Comfort is below the target can never reach it, so it is held at the four cats that cost no Comfort. The fix there is Comfort furniture — the optimizer can limit crowding but cannot create Comfort.
+- **Fallback rooms stay uncapped** deliberately: they are the overflow of last resort, and capping them would leave cats unplaceable now that capacity is a hard limit.
+- Configurable via `optimizer_flags.comfort_target` in the app config; `0` restores the previous raw-capacity behaviour.
 
 ### v5.9.7
 

@@ -815,9 +815,11 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Cats you have blocked from breeding are now moved to the fallback room instead of being left wherever they were sitting. Previously the optimizer just ignored them, so a blocked cat kept taking up space in a breeding room.",
-            "Room capacity is now a real limit. The optimizer used to cram every cat in regardless — in testing a single 4-cat room was handed all 93 cats. Cats that fit nowhere are left where they are and listed under \"Excluded\" instead.",
-            "Cats the optimizer can't place are now reported. They were previously dropped from the results with no explanation; they now appear in the Excluded row alongside the cats you blocked yourself.",
+            "The Room Optimizer no longer fills rooms to the brim. A room's nominal capacity is the point where its Comfort reaches 0 — which is also where the overnight fight chance peaks at roughly 16%. Breeding rooms are now capped at whatever keeps Comfort at 10, where the fight chance is about 1%.",
+            "On a real save the difference is large: two rooms sitting at 11-13% fight risk with 24-25 cats drop to about 1% at 17 cats, and an over-stuffed low-Comfort room fell from roughly 27% to 7%.",
+            "If a room can't reach Comfort 10 even when nearly empty, it is held at the four cats that cost no Comfort — the optimizer can limit crowding but can't create Comfort, so add Comfort furniture there. Fallback rooms stay uncapped on purpose, as the overflow of last resort.",
+            "Cats you have blocked from breeding are now moved to the fallback room instead of being left where they were, and room capacity is a real limit — cats that fit nowhere are listed under \"Excluded\" rather than being crammed in.",
+            "The Comfort target is configurable via optimizer_flags.comfort_target in the app config; set it to 0 to go back to raw room capacity.",
         ]
 
         root = QVBoxLayout(self)
