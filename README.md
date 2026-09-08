@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.6`
+Current release: `v5.9.7`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,14 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.9.7
+
+**Blocked cats and room capacity.**
+
+- **Blocked cats are relocated to the fallback room.** Cats excluded from breeding (the Alive Cats exclude flag / blacklist) were filtered out before assignment and simply left wherever they were, which meant a blocked cat kept occupying breeding-room space. They are now placed into the fallback rooms up front, so the rest of the assignment accounts for the space they actually use. They are never paired, and they don't count toward the breeding stats. With no fallback room configured there is nowhere safe to move them, so they are left alone rather than dropped into a breeding room.
+- **Room capacity is enforced.** The final overflow step appended cats to a room regardless of its capacity — a single room with capacity 4 was handed all 93 cats in testing. Capacity is now honoured everywhere; a cat that fits nowhere is left where it is and reported as excluded.
+- **Unplaceable cats are reported.** `OptimizationResult.excluded_cats` was effectively dead (always empty, because rooms were overfilled instead). It is now populated, and the worker folds those cats into the results table's "Excluded" row next to the ones you blocked yourself — so nothing disappears silently.
 
 ### v5.9.6
 

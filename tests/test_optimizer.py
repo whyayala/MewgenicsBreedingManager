@@ -423,8 +423,9 @@ def test_large_room_greedy_fallback_completes_quickly():
 
 
 def test_no_fallback_room_does_not_hang():
-    """When all rooms are breeding rooms (no fallback), overflow cats end up
-    in the last breeding room.  The DP cap must prevent this from hanging."""
+    """When all rooms are breeding rooms (no fallback) and every room is at
+    capacity, the overflow cats are reported as excluded rather than
+    overfilling a room. The DP cap must prevent this from hanging."""
     import time
 
     cats = []
@@ -448,7 +449,12 @@ def test_no_fallback_room_does_not_hang():
     elapsed = time.monotonic() - start
 
     assert elapsed < 30.0, f"Optimizer took {elapsed:.1f}s with no fallback room"
-    assert result.stats.assigned_cats == 40
+    # Two rooms x cap 6 = 12 slots; the remaining 28 cats stay where they are
+    # and are surfaced as excluded instead of being crammed in.
+    placed = sum(len(assignment.cats) for assignment in result.rooms)
+    assert placed == 12, placed
+    assert result.stats.assigned_cats == 12
+    assert len(result.excluded_cats) == 28
 
 
 def test_greedy_fallback_produces_reasonable_pairs():
@@ -928,3 +934,58 @@ def test_kitten_routing_off_by_default():
         cache=None, excluded_keys=set())
     # Not force-routed: the kitten is placed by the normal assignment pass.
     assert _room_for_cat(result, 1) is not None
+
+
+def test_blocked_cats_are_moved_to_the_fallback_room():
+    """Cats blocked from breeding (the Alive Cats exclude flag / blacklist)
+    should be relocated to the fallback room rather than left wherever they
+    happen to be sitting — otherwise they occupy breeding-room space."""
+    blocked = _make_cat(1, gender="male", room="Floor1_Large", age=5)
+    adult_m = _make_cat(2, gender="male", stat_seed=7, age=5)
+    adult_f = _make_cat(3, gender="female", stat_seed=7, age=5)
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0),
+    ]
+    result = optimize_room_distribution(
+        [blocked, adult_m, adult_f], rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys={1},
+    )
+
+    assert _room_for_cat(result, 1) == "Attic"
+    # ...and never paired, since fallback rooms don't select pairs.
+    paired = {c.db_key for a in result.rooms for p in a.pairs for c in (p.cat_a, p.cat_b)}
+    assert 1 not in paired
+    # Blocked cats aren't breeding candidates, so they don't inflate the stats.
+    assert result.stats.total_cats == 2
+
+
+def test_rooms_are_not_overfilled_and_overflow_is_reported():
+    """Capacity is a real limit: cats that fit nowhere are left where they
+    are and surfaced as excluded, instead of being crammed into a room."""
+    cats = [_make_cat(i, gender="male" if i % 2 else "female", age=5)
+            for i in range(1, 11)]
+    rooms = [RoomConfig("Floor1_Large", RoomType.BREEDING, 4, 50.0)]
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+    placed = sum(len(a.cats) for a in result.rooms)
+    assert placed == 4
+    assert len(result.excluded_cats) == 6
+
+
+def test_blocked_cats_left_alone_when_no_fallback_exists():
+    """With no fallback room configured there is nowhere safe to move a
+    blocked cat, so it is left where it is rather than dropped into a
+    breeding room."""
+    blocked = _make_cat(1, gender="male", room="Floor1_Large", age=5)
+    rooms = [RoomConfig("Floor1_Large", RoomType.BREEDING, 6, 50.0)]
+    result = optimize_room_distribution(
+        [blocked], rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys={1},
+    )
+    assert _room_for_cat(result, 1) is None
