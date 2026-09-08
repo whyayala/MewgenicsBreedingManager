@@ -815,10 +815,11 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Rooms are now configured by Min Comfort instead of capacity. Set each room to the Comfort you want it to keep — 10 is the default — and the optimizer works out how many cats fit, instead of you doing the math to check whether a headcount lands above or below the threshold.",
-            "Each room shows a live \"(fits: N)\" hint next to the setting, so you can see the headcount your Comfort floor produces. If a room's furniture Comfort is too low to reach the target at all, the hint says so and holds it at the 4 cats that cost no Comfort — that room needs Comfort furniture.",
-            "Why it matters: Comfort drives the overnight fight roll — roughly a 16% chance of a fight at Comfort 0 versus about 1% at Comfort 10. A room filled to its old \"capacity\" was a room sitting at Comfort 0.",
-            "Existing room setups reset once to the new Comfort-based defaults, since a saved capacity number can't tell us what Comfort you were aiming for. Fallback rooms are unaffected — they still take the overflow.",
+            "Rooms are now set up by Min Comfort instead of capacity. Tell each room the Comfort it should keep — 10 by default — and the optimizer works out how many cats fit, with a live \"(fits: N)\" hint beside the setting. No more doing the math yourself.",
+            "Why: Comfort drives the overnight fight roll, so a room filled to its old \"capacity\" was a room sitting at Comfort 0 — roughly a 16% chance of a fight per night, versus about 1% at Comfort 10. On a real save, two rooms at 11-13% fight risk drop to about 1%.",
+            "Room capacity is a real limit now. It used to be ignored at the last step — a single 4-cat room was handed all 93 cats in testing. Cats that fit nowhere stay put and are listed under \"Excluded\" instead of vanishing from the results.",
+            "Cats that can't or shouldn't breed are placed on purpose: blocked cats move to the fallback room, kittens go to the quietest room (fallbacks tend to be the fight rooms), cats with no viable pair are parked in the lowest-stimulation room, and cats carrying a disorder no tree wants are sent to the highest-Health room to have it cured.",
+            "Your saved room setups reset once to the new Comfort-based defaults — a stored capacity number can't tell us what Comfort you were aiming for. Fallback rooms are unaffected; they still absorb the overflow.",
         ]
 
         root = QVBoxLayout(self)

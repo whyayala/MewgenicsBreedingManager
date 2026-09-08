@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.9.9`
+Current release: `v5.10.0`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -105,34 +105,30 @@ Produces a standalone executable via PyInstaller.
 
 ## Release Notes
 
-### v5.9.9
+### v5.10.0
 
-**Rooms are configured by Min Comfort, not capacity.**
+**Room assignment overhaul: rooms are sized by Comfort, and cats that can't breed get out of the way.**
 
-- The Room Priority panel's **Capacity** field is now **Min Comfort**: state the Comfort level a room should keep and the optimizer derives the headcount, instead of making you work out whether a capacity lands above or below the fight-risk threshold. Default is **10**.
-- Each room shows a live **"(fits: N)"** hint beside the setting, computed from its current furniture Comfort. Where the target is unreachable the hint explains why and holds the room at the 4 cats that cost no Comfort — the fix there is Comfort furniture.
-- Rationale: Comfort drives the overnight fight roll (`fight_avoidance = 1 - 0.1 x Comfort`, roughly `18.75% - 1.5% x Comfort - 0.48% x average Charisma`). A room filled to its old nominal capacity was a room sitting at Comfort 0 — about a 16% chance of a fight, versus ~1% at Comfort 10.
-- **Migration:** saved room setups reset once to the Comfort-based defaults, because a stored capacity number carries no record of the Comfort it was aiming for. Configs that still carry an explicit capacity keep using it, with the global Comfort target applying on top. Fallback rooms are unaffected — they absorb the overflow and are never Comfort-limited.
+Comfort drives the overnight fight roll — `fight_avoidance = 1 - 0.1 x Comfort`, approximated as `18.75% - 1.5% x Comfort - 0.48% x average Charisma`. A room filled to its nominal capacity is a room sitting at Comfort 0, which is roughly a **16% chance of a fight per night**; Comfort 10 is about **1%**. The optimizer was previously filling rooms to exactly the worst value.
 
-### v5.9.8
-
-**Rooms are capped by Comfort, not by nominal capacity.**
-
-A room's capacity is effectively the point where its Comfort hits 0 (Comfort drops 1 per cat above 4) — and Comfort drives the overnight fight roll: `fight_avoidance = 1 - 0.1 x Comfort`, which the community approximates as `18.75% - 1.5% x Comfort - 0.48% x average Charisma`. So a "full" room carries roughly a **16% chance of a fight**, while Comfort 10 sits near **1%**. Filling a room to capacity was therefore the worst thing the optimizer could do.
-
-- Breeding-room occupancy is now capped at `Comfort - target + 4`, holding post-crowding Comfort at the target (default **10**). Your own capacity setting still applies as an upper bound — the cap only ever tightens it.
+**Rooms are configured by Min Comfort instead of capacity**
+- The Room Priority panel's **Capacity** field is now **Min Comfort** (default **10**): state the Comfort a room should keep and the optimizer derives the headcount, instead of you working out whether a capacity lands above or below the threshold.
+- Each room shows a live **"(fits: N)"** hint from its current furniture Comfort. Where the target can't be reached the hint explains why and holds the room at the 4 cats that cost no Comfort — that room needs Comfort furniture.
 - Measured on a real save: two rooms holding 24-25 cats at 11-13% fight risk drop to 17 cats at ~1%, and a low-Comfort room stuffed with 17 cats falls from ~27% to ~7%.
-- A room whose furniture Comfort is below the target can never reach it, so it is held at the four cats that cost no Comfort. The fix there is Comfort furniture — the optimizer can limit crowding but cannot create Comfort.
-- **Fallback rooms stay uncapped** deliberately: they are the overflow of last resort, and capping them would leave cats unplaceable now that capacity is a hard limit.
-- Configurable via `optimizer_flags.comfort_target` in the app config; `0` restores the previous raw-capacity behaviour.
+- Fallback rooms are never Comfort-limited; they absorb the overflow.
 
-### v5.9.7
+**Room capacity is now a real limit**
+- The final overflow step used to append cats regardless of capacity — a single capacity-4 room was handed all 93 cats from a real save. Capacity is honoured everywhere; a cat that fits nowhere is left where it is and reported.
+- `OptimizationResult.excluded_cats` was effectively dead (always empty, because rooms were overfilled instead). It is now populated, and unplaceable cats appear in the results table's **"Excluded"** row next to the ones you blocked yourself, so nothing disappears silently.
 
-**Blocked cats and room capacity.**
+**Cats that can't or shouldn't breed are placed deliberately**
+- **Blocked cats** (the Alive Cats exclude flag / blacklist) are moved to the fallback room instead of being left wherever they were taking up breeding space. They are never paired and don't count toward the breeding stats. With no fallback configured they are left alone rather than dropped into a breeding room.
+- **Kittens** go to the quietest room rather than straight to the fallback — fallbacks tend to be the fight rooms. They overflow into the fallback only when the quiet room is full, and ties go to the fallback since there is no Comfort advantage to gain by consuming a breeding slot. Also fixes kittens landing in whatever room came last in room order when no fallback was configured, and kitten placement not counting against room capacity. The toggle is now **"Kittens to Quiet Rooms"**.
+- **Cats with no viable pair** are parked in the lowest-stimulation room, and cats carrying a **disorder that no breeding tree wants** are routed to the highest-Health room so the Health effect can cure it away (Must Breed cats exempt).
 
-- **Blocked cats are relocated to the fallback room.** Cats excluded from breeding (the Alive Cats exclude flag / blacklist) were filtered out before assignment and simply left wherever they were, which meant a blocked cat kept occupying breeding-room space. They are now placed into the fallback rooms up front, so the rest of the assignment accounts for the space they actually use. They are never paired, and they don't count toward the breeding stats. With no fallback room configured there is nowhere safe to move them, so they are left alone rather than dropped into a breeding room.
-- **Room capacity is enforced.** The final overflow step appended cats to a room regardless of its capacity — a single room with capacity 4 was handed all 93 cats in testing. Capacity is now honoured everywhere; a cat that fits nowhere is left where it is and reported as excluded.
-- **Unplaceable cats are reported.** `OptimizationResult.excluded_cats` was effectively dead (always empty, because rooms were overfilled instead). It is now populated, and the worker folds those cats into the results table's "Excluded" row next to the ones you blocked yourself — so nothing disappears silently.
+**Migration**
+- Saved room setups reset once to the Comfort-based defaults: a stored capacity number carries no record of the Comfort it was aiming for. Configs still carrying an explicit capacity keep using it, with a global Comfort target applying on top (`optimizer_flags.comfort_target`; `0` restores raw-capacity behaviour).
+
 
 ### v5.9.6
 
