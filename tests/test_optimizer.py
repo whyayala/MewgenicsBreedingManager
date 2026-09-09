@@ -1130,3 +1130,73 @@ def test_per_room_min_comfort_not_capped_twice():
     )[0]
     assert cfg.max_cats == 23  # Comfort 23 - (23-4) = 4
     assert apply_comfort_target([cfg], 10.0)[0].max_cats == 23
+
+
+# ── More Depth (simulated annealing) must honour deliberate placements ──────
+
+def _sa_rooms():
+    return [
+        RoomConfig("Floor1_Large", RoomType.BREEDING, 8, 90.0, comfort=26.0),
+        RoomConfig("Floor2_Large", RoomType.BREEDING, 8, 10.0, comfort=26.0),  # quietest
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=25.0),
+    ]
+
+
+def _sa_cats():
+    cats = [_make_cat(i, gender="male" if i % 2 else "female", age=5, stat_seed=7)
+            for i in range(1, 11)]
+    cats.append(_make_cat(90, gender="male", age=1))   # kitten
+    cats.append(_make_cat(91, gender="female", age=5))  # blocked
+    return cats
+
+
+def test_more_depth_keeps_blocked_cats_in_the_fallback():
+    """SA rebuilds assignments from the breeding-candidate map, which excludes
+    blocked cats — they used to be silently dropped from the result."""
+    cats = _sa_cats()
+    for use_sa in (False, True):
+        result = optimize_room_distribution(
+            cats, _sa_rooms(),
+            OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=use_sa,
+                               sa_chains=1),
+            cache=None, excluded_keys={91},
+        )
+        assert _room_for_cat(result, 91) == "Attic", use_sa
+        paired = {c.db_key for a in result.rooms for p in a.pairs
+                  for c in (p.cat_a, p.cat_b)}
+        assert 91 not in paired, use_sa
+
+
+def test_more_depth_keeps_kittens_in_the_quiet_room():
+    """Kittens contribute nothing to pair scores, so SA would shuffle them
+    between rooms for free and undo their deliberate placement."""
+    cats = _sa_cats()
+    for use_sa in (False, True):
+        result = optimize_room_distribution(
+            cats, _sa_rooms(),
+            OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=use_sa,
+                               sa_chains=1, send_kittens_to_fallback=True,
+                               kitten_age_threshold=2),
+            cache=None, excluded_keys=set(),
+        )
+        assert _room_for_cat(result, 90) == "Floor2_Large", use_sa
+
+
+def test_more_depth_respects_capacity_with_pinned_cats():
+    """Pinned cats still occupy space. Only eternal-youth cats are exempt from
+    room capacity, so pinning must not let SA overfill a room."""
+    cats = [_make_cat(i, gender="male" if i % 2 else "female", age=5, stat_seed=7)
+            for i in range(1, 15)]
+    cats += [_make_cat(90 + i, gender="male", age=1) for i in range(4)]  # kittens
+    rooms = _sa_rooms()
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=True,
+                           sa_chains=1, send_kittens_to_fallback=True,
+                           kitten_age_threshold=2),
+        cache=None, excluded_keys=set(),
+    )
+    for assignment in result.rooms:
+        cap = assignment.room.max_cats
+        if cap is not None:
+            assert len(assignment.cats) <= cap, (assignment.room.key, len(assignment.cats))

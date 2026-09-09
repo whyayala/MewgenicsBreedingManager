@@ -126,6 +126,11 @@ Comfort drives the overnight fight roll — `fight_avoidance = 1 - 0.1 x Comfort
 - **Kittens** go to the quietest room rather than straight to the fallback — fallbacks tend to be the fight rooms. They overflow into the fallback only when the quiet room is full, and ties go to the fallback since there is no Comfort advantage to gain by consuming a breeding slot. Also fixes kittens landing in whatever room came last in room order when no fallback was configured, and kitten placement not counting against room capacity. The toggle is now **"Kittens to Quiet Rooms"**.
 - **Cats with no viable pair** are parked in the lowest-stimulation room, and cats carrying a **disorder that no breeding tree wants** are routed to the highest-Health room so the Health effect can cure it away (Must Breed cats exempt).
 
+**More Depth (simulated annealing) honours these placements**
+- The SA refinement pass rebuilds assignments from the breeding-candidate map, which excludes blocked cats — so with More Depth enabled blocked cats were **silently dropped from the result entirely**. They are now held aside across refinement and restored afterwards.
+- Kittens, parked unpaired cats and disorder carriers contribute nothing to pair scores, so SA shuffled them between rooms at no cost to its objective and undid their deliberate placement. They are now pinned.
+- Pinning is kept distinct from the eternal-youth capacity exemption: eternal-youth cats neither move nor count toward capacity, while deliberately-placed cats don't move but still occupy space — otherwise pinning would have let SA overfill rooms.
+
 **Migration**
 - Saved room setups reset once to the Comfort-based defaults: a stored capacity number carries no record of the Comfort it was aiming for. Configs still carrying an explicit capacity keep using it, with a global Comfort target applying on top (`optimizer_flags.comfort_target`; `0` restores raw-capacity behaviour).
 

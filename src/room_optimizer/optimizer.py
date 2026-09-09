@@ -644,6 +644,7 @@ def _run_sa_refinement(
     room_assignments: dict[str, list[Cat]],
     room_configs: list[RoomConfig],
     cats_by_id: dict[int, Cat],
+    pinned_ids: frozenset[int] = frozenset(),
     filtered_cats: list[Cat],
     params: OptimizationParams,
     mode_family: bool,
@@ -685,7 +686,16 @@ def _run_sa_refinement(
         for cat in cats_list:
             sa_state[cat.db_key] = room_key
 
-    sa_fixed = frozenset(c.db_key for c in filtered_cats if _has_eternal_youth(c))
+    # Eternal-youth cats keep their spot, and so do cats the deliberate
+    # placement passes put somewhere for a reason (kittens in the quietest
+    # room, unpaired cats parked in low-stimulation rooms, disorder carriers
+    # sent to a Health room). None of them contribute to a pair, so SA would
+    # otherwise shuffle them between rooms at no cost to its score and undo
+    # the placement.
+    # Eternal-youth cats are exempt from room capacity as well as immovable;
+    # deliberately-placed cats occupy real space, so they only get pinned.
+    sa_ey_fixed = frozenset(c.db_key for c in filtered_cats if _has_eternal_youth(c))
+    sa_immovable = frozenset(set(pinned_ids) - sa_ey_fixed)
     sa_haters = {k: frozenset(v) for k, v in hater_key_map.items()}
     sa_lovers = {k: frozenset(v) for k, v in lover_key_map.items()}
     sa_family = {k: v for k, v in family_group_ids.items()} if family_group_ids else {}
@@ -702,7 +712,8 @@ def _run_sa_refinement(
         room_max_cats={r.key: r.max_cats for r in room_configs},
         room_stim={r.key: r.base_stim for r in room_configs},
         room_modes={r.key: r.mode_key for r in room_configs},
-        fixed_ids=sa_fixed,
+        fixed_ids=sa_ey_fixed,
+        immovable_ids=sa_immovable,
         hater_key_map=sa_haters,
         lover_key_map=sa_lovers,
         avoid_lovers=params.avoid_lovers,
@@ -783,6 +794,9 @@ def optimize_room_distribution(
         c for c in cats
         if c.status == "In House" and c.db_key in excluded_keys
     ]
+    # Cats placed somewhere deliberately rather than by pair optimization;
+    # SA must not shuffle them (see _run_sa_refinement's pinned_ids).
+    deliberate_placements: set[int] = set()
     blocked_placed: list[Cat] = []
     for _i, _cat in enumerate(blocked_cats):
         if _place_in_first_fitting_room(
@@ -842,6 +856,7 @@ def optimize_room_distribution(
                         room_assignments[room.key].append(cat)
                         room_effective_counts[room.key] += 1
                         assigned_cats.add(cat.db_key)
+                        deliberate_placements.add(cat.db_key)
                         placed = True
                         break
                 if placed:
@@ -852,6 +867,7 @@ def optimize_room_distribution(
                 room_assignments[target].append(cat)
                 room_effective_counts[target] = room_effective_counts.get(target, 0) + 1
                 assigned_cats.add(cat.db_key)
+                deliberate_placements.add(cat.db_key)
 
     cats_by_id = {c.db_key: c for c in filtered_cats}
     original_state = {c.db_key: (c.room or "") for c in filtered_cats}
@@ -1277,6 +1293,7 @@ def optimize_room_distribution(
                     room_assignments[room.key].append(cat)
                     room_effective_counts[room.key] += 1
                     assigned_cats.add(cat.db_key)
+                    deliberate_placements.add(cat.db_key)
                     placed_quiet = True
                     break
             if placed_quiet:
@@ -1288,13 +1305,31 @@ def optimize_room_distribution(
                 cat, fallback_room_configs, room_assignments,
                 room_effective_counts, assigned_cats, offset=i,
             ):
+                deliberate_placements.add(cat.db_key)
                 continue
 
     if params.use_sa and not _cancelled():
+        # Blocked cats are not breeding candidates and are absent from
+        # cats_by_id, so the SA pass would both let them drift between rooms
+        # and then drop them when it rebuilds assignments from that map.
+        # Hold them aside across refinement and restore them afterwards.
+        _blocked_by_key = {c.db_key: c for c in blocked_placed}
+        _blocked_rooms: dict[int, str] = {}
+        if _blocked_by_key:
+            for _room_key, _room_cats in room_assignments.items():
+                keep = []
+                for _c in _room_cats:
+                    if _c.db_key in _blocked_by_key:
+                        _blocked_rooms[_c.db_key] = _room_key
+                    else:
+                        keep.append(_c)
+                room_assignments[_room_key] = keep
+
         room_assignments = _run_sa_refinement(
             room_assignments=room_assignments,
             room_configs=room_configs,
             cats_by_id=cats_by_id,
+            pinned_ids=frozenset(deliberate_placements),
             filtered_cats=filtered_cats,
             params=params,
             mode_family=params.mode_family,
@@ -1306,6 +1341,12 @@ def optimize_room_distribution(
             score_pair_cached=_score_pair_cached,
             cancel_check=cancel_check,
         )
+
+        for _key, _room_key in _blocked_rooms.items():
+            target = _room_key if _room_key in room_assignments else None
+            if target is None:
+                continue
+            room_assignments[target].append(_blocked_by_key[_key])
 
     room_results: list[RoomAssignment] = []
     breeding_rooms_used = 0

@@ -164,6 +164,7 @@ def _sa_chain(
     room_stim: dict[str, float],
     room_modes: dict[str, str],
     fixed_ids: frozenset[int],
+    immovable_ids: frozenset[int] = frozenset(),
     hater_key_map: dict[int, frozenset[int]],
     lover_key_map: dict[int, frozenset[int]],
     avoid_lovers: bool,
@@ -194,7 +195,12 @@ def _sa_chain(
         return bool(cancel_check and cancel_check())
     breeding_set = set(breeding_room_keys)
 
-    mutable_ids = [cid for cid in initial_state if cid not in fixed_ids]
+    # fixed_ids are eternal-youth cats: they neither move NOR count toward
+    # room capacity. immovable_ids were placed deliberately (kittens in the
+    # quietest room, parked unpaired cats): they must not move, but they do
+    # occupy real space, so they still count.
+    _pinned = fixed_ids | immovable_ids
+    mutable_ids = [cid for cid in initial_state if cid not in _pinned]
     if len(mutable_ids) < 2:
         return initial_state, float("-inf")
 
@@ -290,7 +296,7 @@ def _sa_chain(
 
     def _neighbor(state: dict[int, str]) -> dict[int, str]:
         new_state = state.copy()
-        keys = [cid for cid in new_state if cid not in fixed_ids]
+        keys = [cid for cid in new_state if cid not in _pinned]
         if not keys:
             return new_state
 
@@ -298,7 +304,7 @@ def _sa_chain(
             cat_to_move = rng.choice(keys)
             room_counts: dict[str, int] = {rk: 0 for rk in breeding_room_keys}
             for cid, r_key in new_state.items():
-                if cid in fixed_ids:
+                if cid in _pinned:
                     continue
                 if r_key in room_counts:
                     room_counts[r_key] += 1
@@ -395,6 +401,7 @@ def run_parallel_sa(
     room_stim: dict[str, float],
     room_modes: dict[str, str],
     fixed_ids: frozenset[int],
+    immovable_ids: frozenset[int] = frozenset(),
     hater_key_map: dict[int, frozenset[int]],
     lover_key_map: dict[int, frozenset[int]],
     avoid_lovers: bool,
@@ -430,6 +437,7 @@ def run_parallel_sa(
         room_stim=room_stim,
         room_modes=room_modes,
         fixed_ids=fixed_ids,
+        immovable_ids=immovable_ids,
         hater_key_map=hater_key_map,
         lover_key_map=lover_key_map,
         avoid_lovers=avoid_lovers,
