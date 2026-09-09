@@ -815,12 +815,8 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Rooms are now set up by Min Comfort instead of capacity. Tell each room the Comfort it should keep — 10 by default — and the optimizer works out how many cats fit, with a live \"(fits: N)\" hint beside the setting. No more doing the math yourself.",
-            "Why: Comfort drives the overnight fight roll, so a room filled to its old \"capacity\" was a room sitting at Comfort 0 — roughly a 16% chance of a fight per night, versus about 1% at Comfort 10. On a real save, two rooms at 11-13% fight risk drop to about 1%.",
-            "Room capacity is a real limit now. It used to be ignored at the last step — a single 4-cat room was handed all 93 cats in testing. Cats that fit nowhere stay put and are listed under \"Excluded\" instead of vanishing from the results.",
-            "Cats that can't or shouldn't breed are placed on purpose: blocked cats move to the fallback room, kittens go to the quietest room (fallbacks tend to be the fight rooms), cats with no viable pair are parked in the lowest-stimulation room, and cats carrying a disorder no tree wants are sent to the highest-Health room to have it cured.",
-            "All of the above now hold with \"More Depth\" enabled. The deeper search rebuilt room assignments in a way that dropped blocked cats from the results entirely and reshuffled kittens out of the quiet room; those placements are now respected.",
-            "Your saved room setups reset once to the new Comfort-based defaults — a stored capacity number can't tell us what Comfort you were aiming for. Fallback rooms are unaffected; they still absorb the overflow.",
+            "\"More Depth\" now honours the room placement rules from v5.10.0. The deeper search rebuilt assignments in a way that dropped blocked cats from the results entirely, and it reshuffled kittens out of the quiet room because they don't affect its pair score.",
+            "If you turned More Depth on after updating to v5.10.0 and your blocked cats or kittens weren't where you expected, this is why — the two modes now produce the same placements at the same pair count.",
         ]
 
         root = QVBoxLayout(self)

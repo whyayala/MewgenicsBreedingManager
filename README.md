@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.10.0`
+Current release: `v5.10.1`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -105,6 +105,16 @@ Produces a standalone executable via PyInstaller.
 
 ## Release Notes
 
+### v5.10.1
+
+**More Depth honours the new placement rules.** v5.10.0's placement work was bypassed by the simulated-annealing pass.
+
+- The SA refinement pass rebuilds assignments from the breeding-candidate map, which excludes blocked cats — so with More Depth enabled blocked cats were **silently dropped from the result entirely**. They are now held aside across refinement and restored afterwards.
+- Kittens, parked unpaired cats and disorder carriers contribute nothing to pair scores, so SA shuffled them between rooms at no cost to its objective and undid their deliberate placement. They are now pinned.
+- Pinning is kept distinct from the eternal-youth capacity exemption: eternal-youth cats neither move nor count toward capacity, while deliberately-placed cats don't move but still occupy space — otherwise pinning would have let SA overfill rooms.
+
+Verified on a real save: kitten, blocked-cat and room-capacity outcomes are now identical with More Depth on and off, at the same pair count.
+
 ### v5.10.0
 
 **Room assignment overhaul: rooms are sized by Comfort, and cats that can't breed get out of the way.**
@@ -125,11 +135,6 @@ Comfort drives the overnight fight roll — `fight_avoidance = 1 - 0.1 x Comfort
 - **Blocked cats** (the Alive Cats exclude flag / blacklist) are moved to the fallback room instead of being left wherever they were taking up breeding space. They are never paired and don't count toward the breeding stats. With no fallback configured they are left alone rather than dropped into a breeding room.
 - **Kittens** go to the quietest room rather than straight to the fallback — fallbacks tend to be the fight rooms. They overflow into the fallback only when the quiet room is full, and ties go to the fallback since there is no Comfort advantage to gain by consuming a breeding slot. Also fixes kittens landing in whatever room came last in room order when no fallback was configured, and kitten placement not counting against room capacity. The toggle is now **"Kittens to Quiet Rooms"**.
 - **Cats with no viable pair** are parked in the lowest-stimulation room, and cats carrying a **disorder that no breeding tree wants** are routed to the highest-Health room so the Health effect can cure it away (Must Breed cats exempt).
-
-**More Depth (simulated annealing) honours these placements**
-- The SA refinement pass rebuilds assignments from the breeding-candidate map, which excludes blocked cats — so with More Depth enabled blocked cats were **silently dropped from the result entirely**. They are now held aside across refinement and restored afterwards.
-- Kittens, parked unpaired cats and disorder carriers contribute nothing to pair scores, so SA shuffled them between rooms at no cost to its objective and undid their deliberate placement. They are now pinned.
-- Pinning is kept distinct from the eternal-youth capacity exemption: eternal-youth cats neither move nor count toward capacity, while deliberately-placed cats don't move but still occupy space — otherwise pinning would have let SA overfill rooms.
 
 **Migration**
 - Saved room setups reset once to the Comfort-based defaults: a stored capacity number carries no record of the Comfort it was aiming for. Configs still carrying an explicit capacity keep using it, with a global Comfort target applying on top (`optimizer_flags.comfort_target`; `0` restores raw-capacity behaviour).
