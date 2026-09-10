@@ -815,9 +815,10 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Fixed a significant Mutation Planner bug: clicking a Birth Defect listed the wrong cats. The game reuses its internal ids across body parts — id 700 alone covers Lobster Claw (arms), Gastroschisis (body), Graves Disease (eyes), Neurofibromatosis (fur) and Microcephaly (head) — and the planner matched on that id alone.",
-            "The scale of it: on a real save, clicking Neurofibromatosis listed 13 cats when only 1 actually had it, and 20 of the save's 21 birth defects listed at least one wrong cat. Regular mutations were affected the same way.",
-            "Trait targeting in the Room Optimizer used the same matching, so desired-trait and disorder rules could fire on the wrong cats too.",
+            "Desired mutations and birth defects now actually influence the Room Optimizer. It had its own private copy of the trait matcher, and that copy compared the planner's <code>name|id</code> keys against a bare trait name — a comparison that can never succeed, so picking a desired trait had no effect on room scoring whatsoever.",
+            "Measured on a real save: with a desired mutation selected, the desired-trait bonus now applies to all 2,567 pairs that involve a carrier, where previously it applied to none.",
+            "This is the mirror image of the v5.10.2 bug. There, id-only matching listed cats that did not carry the trait (false positives in the Mutation Planner); here, full-key matching against a name found nobody at all (false negatives in the Room Optimizer). Same root cause: two copies of one matcher that drifted apart.",
+            "The duplicate is gone \u2014 both the planners and the optimizer now call one shared implementation, so they cannot diverge again. The optimizer's unwanted-disorder and trait-loss rules were never affected; they match disorder names, which carry no id.",
         ]
 
         root = QVBoxLayout(self)
@@ -834,9 +835,9 @@ class WhatsNewDialog(QDialog):
         body.setHtml(
             f"""
             <div style="line-height:1.5;">
-              <p><b>Final maintained release.</b> Bundles the #102–#104 fixes, the new Getting Started guide, and the Detailed Scoring donation/exceptional source.</p>
+              <p><b>Maintained fork</b> of frankieg33/MewgenicsBreedingManager, updated for the Mewgenics 1.1 balance overhaul.</p>
               <ul>{bullets}</ul>
-              <p><a href="https://github.com/frankieg33/MewgenicsBreedingManager/releases">View releases on GitHub</a></p>
+              <p><a href="https://github.com/whyayala/MewgenicsBreedingManager/releases">View releases on GitHub</a></p>
             </div>
             """
         )

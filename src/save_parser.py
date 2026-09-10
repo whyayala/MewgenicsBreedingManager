@@ -1502,6 +1502,68 @@ def _visual_mutation_chip_items(entries: list[dict[str, object]]) -> list[tuple[
     return chip_items
 
 
+_TRAIT_KEY_ID_RE = re.compile(r'\(ID\s+(-?\d+)\)')
+
+
+def chip_trait_keys(chip_items) -> set[str]:
+    """Rebuild the planner's ``"<chip text>|<id>"`` keys from chip items.
+
+    The Mutation Planner builds its trait catalog keys this way (see
+    ``mutation_planner._build_trait_catalog``), so matching whole keys keeps
+    the catalog and the matcher in step.
+    """
+    keys: set[str] = set()
+    for text, tip in chip_items or []:
+        match = _TRAIT_KEY_ID_RE.search(str(tip or ""))
+        key = f"{text}|{match.group(1)}" if match else str(text)
+        keys.add(key.strip().lower())
+    return keys
+
+
+def cat_has_visual_trait(cat: 'Cat', trait_key: str, *, want_defect: bool) -> bool:
+    """Does *cat* carry the visual mutation/defect named by *trait_key*?
+
+    Canonical implementation shared by every caller. The game reuses visual
+    mutation ids across body parts — defect id 700 is Lobster Claw (arms),
+    Gastroschisis (body), Graves Disease (eyes), Neurofibromatosis (fur) and
+    Microcephaly (head) — so matching on the id alone lists the carriers of
+    all of them. Matching on the name alone is equally wrong: it accepts a
+    key whose id points at a different trait. Both halves must agree.
+    """
+    trait_key = str(trait_key or "").strip().lower()
+    if not trait_key:
+        return False
+    names = getattr(cat, "defects" if want_defect else "mutations", None) or []
+    if '|' not in trait_key:
+        return any(str(n).strip().lower() == trait_key for n in names)
+
+    chip_attr = "defect_chip_items" if want_defect else "mutation_chip_items"
+    if trait_key in chip_trait_keys(getattr(cat, chip_attr, None)):
+        return True
+
+    # No chip items to compare (test stubs, or a cat parsed without them):
+    # fall back to name AND id together.
+    name, _, raw_id = trait_key.rpartition('|')
+    if not any(str(n).strip().lower() == name for n in names):
+        return False
+    try:
+        mid = int(raw_id)
+    except (TypeError, ValueError):
+        return True
+    if mid == -2:
+        # Chip tooltips render the missing-part sentinel as -2 while parsed
+        # entries keep the raw u32.
+        mid = 0xFFFF_FFFE
+    entries = getattr(cat, "visual_mutation_entries", None) or []
+    if not entries:
+        return True
+    return any(
+        int(entry.get("mutation_id", -1)) == mid
+        and bool(entry.get("is_defect")) == want_defect
+        for entry in entries
+    )
+
+
 def _appearance_group_names(cat: 'Cat', group_key: str) -> list[str]:
     entries = getattr(cat, "visual_mutation_entries", []) or []
     names: list[str] = []
