@@ -715,3 +715,79 @@ class TestKinshipMemoSharing:
                 shared = risk_percent(a, b, memo)
                 fresh = risk_percent(a, b)
                 assert math.isclose(shared, fresh, rel_tol=1e-9, abs_tol=1e-9), (a.name, b.name, shared, fresh)
+
+
+class TestTraitKeyMatching:
+    """The game reuses visual-mutation ids across body parts, so matching a
+    trait by id alone lists the wrong cats. Defect id 700 alone is Lobster
+    Claw (arms), Gastroschisis (body), Graves Disease (eyes),
+    Neurofibromatosis (fur) and Microcephaly (head)."""
+
+    @staticmethod
+    def _cat(defects=(), mutations=()):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            defect_chip_items=[
+                (name, f"{part} Birth Defect (ID {mid})\n{name}")
+                for name, part, mid in defects
+            ],
+            mutation_chip_items=[
+                (name, f"{part} Mutation (ID {mid})\n{name}")
+                for name, part, mid in mutations
+            ],
+            defects=[name for name, _, _ in defects],
+            mutations=[name for name, _, _ in mutations],
+            visual_mutation_ids=[mid for _, _, mid in mutations],
+            visual_mutation_entries=[],
+        )
+
+    def test_same_defect_id_on_different_parts_does_not_cross_match(self):
+        from mewgenics.utils.abilities import _cat_has_trait
+        lobster = self._cat(defects=[("Lobster Claw", "Arm", 700)])
+        graves = self._cat(defects=[("Graves Disease", "Eye", 700)])
+
+        assert _cat_has_trait(lobster, "defect", "lobster claw|700")
+        assert not _cat_has_trait(lobster, "defect", "graves disease|700")
+        assert _cat_has_trait(graves, "defect", "graves disease|700")
+        assert not _cat_has_trait(graves, "defect", "lobster claw|700")
+
+    def test_missing_part_sentinel_matches(self):
+        from mewgenics.utils.abilities import _cat_has_trait
+        # Chip tooltips render the sentinel as -2.
+        no_ears = self._cat(defects=[("No Ears", "Ear", -2)])
+        assert _cat_has_trait(no_ears, "defect", "no ears|-2")
+        assert not _cat_has_trait(no_ears, "defect", "no tail|-2")
+
+    def test_same_mutation_id_on_different_parts_does_not_cross_match(self):
+        from mewgenics.utils.abilities import _cat_has_trait
+        ears = self._cat(mutations=[("Ears 413", "Ear", 413)])
+        body = self._cat(mutations=[("Body 413", "Body", 413)])
+        assert _cat_has_trait(ears, "mutation", "ears 413|413")
+        assert not _cat_has_trait(ears, "mutation", "body 413|413")
+        assert _cat_has_trait(body, "mutation", "body 413|413")
+
+    def test_name_only_keys_still_match(self):
+        from mewgenics.utils.abilities import _cat_has_trait
+        cat = self._cat(defects=[("Cataracts", "Eye", 705)])
+        assert _cat_has_trait(cat, "defect", "cataracts")
+
+    def test_fixture_save_every_defect_matches_only_its_carriers(self):
+        """End-to-end against the real save: for each Birth Defect the
+        planner would list, the matched cats are exactly the carriers."""
+        import re
+        from save_parser import parse_save
+        from mewgenics.utils.abilities import _cat_has_trait
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        house = [c for c in cats if c.status == "In House"]
+
+        carriers: dict[str, set[str]] = {}
+        for cat in house:
+            for text, tip in (getattr(cat, "defect_chip_items", []) or []):
+                match = re.search(r"\(ID\s+(-?\d+)\)", tip)
+                key = (f"{text}|{match.group(1)}" if match else text).strip().lower()
+                carriers.setdefault(key, set()).add(cat.name)
+
+        assert carriers, "fixture save should carry birth defects"
+        for key, expected in carriers.items():
+            matched = {c.name for c in house if _cat_has_trait(c, "defect", key)}
+            assert matched == expected, key

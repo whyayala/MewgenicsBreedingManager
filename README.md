@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.10.1`
+Current release: `v5.10.2`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,15 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.10.2
+
+**Fixed: traits matched the wrong cats.** Clicking a Birth Defect in the Mutation Planner listed cats that didn't have it.
+
+- The game reuses visual-mutation ids across body parts, and trait matching keyed on the id alone. Defect id 700 is Lobster Claw (arms), Gastroschisis (body), Graves Disease (eyes), Neurofibromatosis (fur) **and** Microcephaly (head) — so selecting any one of them matched the carriers of all five.
+- Measured on a real save: **20 of 21** birth defects listed at least one cat that didn't have the defect; clicking Neurofibromatosis showed 13 cats when exactly 1 carried it. Regular mutations shared the flaw (mutation id 413 is both an ear and a body mutation).
+- Matching now compares the whole `<name>|<id>` key, rebuilt from the cat's own chip data the same way the planner builds catalog keys, so the two can't drift apart. Where a cat has no chip data the fallback requires the name **and** the id to agree — the name alone would accept a key pointing at a different trait.
+- This also affected the Room Optimizer, whose desired-trait and unwanted-disorder rules use the same matching, so those could act on the wrong cats.
 
 ### v5.10.1
 

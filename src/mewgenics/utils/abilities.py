@@ -960,22 +960,77 @@ def _load_ability_descriptions(gpak_path: str | None) -> dict[str, str]:
         return {}
 
 
+_TRAIT_KEY_ID_RE = re.compile(r'\(ID\s+(-?\d+)\)')
+
+
+def _chip_trait_keys(chip_items) -> set[str]:
+    """Rebuild the catalog's "<chip text>|<id>" keys from a cat's chip items.
+
+    The Mutation Planner builds its trait keys this way (see
+    ``mutation_planner._build_trait_catalog``), so matching whole keys keeps
+    the two in step. Matching on the mutation id alone is not enough: the
+    game reuses ids across body parts, so defect id 700 is Lobster Claw on
+    arms, Gastroschisis on the body, Graves Disease on the eyes and more —
+    clicking any one of them used to list the carriers of all of them.
+    """
+    keys: set[str] = set()
+    for text, tip in chip_items or []:
+        match = _TRAIT_KEY_ID_RE.search(str(tip or ""))
+        key = f"{text}|{match.group(1)}" if match else str(text)
+        keys.add(key.strip().lower())
+    return keys
+
+
+def _fallback_visual_match(cat, trait_key: str, *, names, want_defect: bool) -> bool:
+    """Match a "<name>|<id>" key when the cat has no chip items to compare.
+
+    Both halves must agree: the id alone is ambiguous because the game reuses
+    ids across body parts, and the name alone would accept a key whose id
+    points at a different trait.
+    """
+    name, _, raw_id = trait_key.rpartition('|')
+    if not any(str(n).strip().lower() == name for n in names or []):
+        return False
+    try:
+        mid = int(raw_id)
+    except (TypeError, ValueError):
+        return True
+    if mid == -2:
+        # Chip tooltips render the missing-part sentinel as -2 while parsed
+        # entries keep the raw u32.
+        mid = 0xFFFF_FFFE
+    entries = getattr(cat, "visual_mutation_entries", None) or []
+    if not entries:
+        # Nothing to check the id against — the name match stands.
+        return True
+    return any(
+        int(entry.get("mutation_id", -1)) == mid
+        and bool(entry.get("is_defect")) == want_defect
+        for entry in entries
+    )
+
+
 def _cat_has_trait(cat: 'Cat', category: str, trait_key: str) -> bool:
     """Check whether *cat* carries the given trait (mutation/passive/ability)."""
     if category == "mutation":
         if '|' in trait_key:
-            mid = int(trait_key.rsplit('|', 1)[1])
-            return mid in (getattr(cat, "visual_mutation_ids", []) or [])
+            if trait_key in _chip_trait_keys(getattr(cat, "mutation_chip_items", [])):
+                return True
+            return _fallback_visual_match(
+                cat, trait_key,
+                names=getattr(cat, "mutations", None),
+                want_defect=False,
+            )
         return any(m.lower() == trait_key for m in getattr(cat, "mutations", []) or [])
     elif category == "defect":
         if '|' in trait_key:
-            mid = int(trait_key.rsplit('|', 1)[1])
-            if mid == -2:
-                # Missing-part sentinel: tooltips (and thus catalog keys) show
-                # ID -2, but entries store the raw u32 sentinel.
-                mid = 0xFFFF_FFFE
-            entries = getattr(cat, "visual_mutation_entries", []) or []
-            return any(int(e["mutation_id"]) == mid and e.get("is_defect") for e in entries)
+            if trait_key in _chip_trait_keys(getattr(cat, "defect_chip_items", [])):
+                return True
+            return _fallback_visual_match(
+                cat, trait_key,
+                names=getattr(cat, "defects", None),
+                want_defect=True,
+            )
         return any(d.lower() == trait_key for d in getattr(cat, "defects", []) or [])
     elif category == "passive":
         return any(p.lower() == trait_key for p in getattr(cat, "passive_abilities", []) or [])
