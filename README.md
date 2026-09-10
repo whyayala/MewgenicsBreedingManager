@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.10.2`
+Current release: `v5.10.3`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -105,6 +105,16 @@ Produces a standalone executable via PyInstaller.
 
 ## Release Notes
 
+### v5.10.3
+
+**Fixed: desired mutations and defects had no effect on the Room Optimizer.**
+
+A follow-up to v5.10.2, which fixed trait matching in the planners. `breeding.py` turned out to carry a **second, separate copy** of the trait matcher — the one `score_pair` uses for the Room Optimizer's desired-trait bonus — and it compared the planner's `<name>|<id>` keys against the bare trait name. Those never match, so selecting a desired mutation or defect had **no effect at all** on room-optimizer pair scoring: a silent false negative, distinct from v5.10.2's false positives.
+
+- Measured on a real save: with a desired mutation selected, the bonus now applies to all **2,567** pairs involving a carrier, where before it applied to none. Desired traits now genuinely steer room assignment.
+- The duplicate is gone. The canonical matcher lives in `save_parser.py` and both callers delegate to it, so the two can no longer diverge. It can't live in the UI package's `abilities.py`, because importing anything from `mewgenics` runs its `__init__.py` (game data, locale, tags, thresholds) and `breeding.py` is a core Qt-free module.
+- The optimizer's unwanted-disorder curing and trait-loss rules were unaffected — they match disorder names, which carry no id.
+
 ### v5.10.2
 
 **Fixed: traits matched the wrong cats.** Clicking a Birth Defect in the Mutation Planner listed cats that didn't have it.
@@ -113,8 +123,6 @@ Produces a standalone executable via PyInstaller.
 - Measured on a real save: **20 of 21** birth defects listed at least one cat that didn't have the defect; clicking Neurofibromatosis showed 13 cats when exactly 1 carried it. Regular mutations shared the flaw (mutation id 413 is both an ear and a body mutation).
 - Matching now compares the whole `<name>|<id>` key, rebuilt from the cat's own chip data the same way the planner builds catalog keys, so the two can't drift apart. Where a cat has no chip data the fallback requires the name **and** the id to agree — the name alone would accept a key pointing at a different trait.
 - Every trait-driven Mutation Planner feature was affected, not just the carrier list: the cat-table trait filter, the single-trait carriers list and its recommended pairs, the multi-trait carrier summary, and both the per-cat and per-pair scoring behind **Find Best Pairs**. The Perfect 7 Planner's trait scoring and the donation "missing planner traits" check share the same matcher.
-- **`breeding.py` carried a second, separate copy** of the matcher — the one the Room Optimizer uses for its desired-trait bonus. That copy never handled the `<name>|<id>` key format at all, so it matched **nothing**: selecting a desired mutation or defect had no effect on room-optimizer pair scoring. On the fixture save the bonus now applies to all 2,567 pairs involving a carrier, where before it applied to none. The duplicate is gone — both callers now share one implementation in `save_parser.py`.
-- The optimizer's unwanted-disorder and trait-loss rules were unaffected: they do their own name matching on disorder keys, which carry no id.
 
 ### v5.10.1
 
