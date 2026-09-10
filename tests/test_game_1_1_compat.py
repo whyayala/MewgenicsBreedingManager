@@ -791,3 +791,65 @@ class TestTraitKeyMatching:
         for key, expected in carriers.items():
             matched = {c.name for c in house if _cat_has_trait(c, "defect", key)}
             assert matched == expected, key
+
+    def test_breeding_module_matcher_agrees_with_the_canonical_one(self):
+        """breeding.py has its own _cat_has_trait used by the room optimizer's
+        desired-trait bonus. It compared "<name>|<id>" keys against the bare
+        name, so planner mutation/defect traits silently matched nothing."""
+        import re
+        import breeding
+        from save_parser import parse_save
+        from mewgenics.utils.abilities import _cat_has_trait
+        cats, _, _ = parse_save(_fixture_save(_FIXTURE_11))
+        house = [c for c in cats if c.status == "In House"]
+
+        checked = 0
+        for attr, category in (("defect_chip_items", "defect"),
+                               ("mutation_chip_items", "mutation")):
+            carriers: dict[str, set[str]] = {}
+            for cat in house:
+                for text, tip in (getattr(cat, attr, []) or []):
+                    match = re.search(r"\(ID\s+(-?\d+)\)", tip)
+                    key = (f"{text}|{match.group(1)}" if match else text).strip().lower()
+                    carriers.setdefault(key, set()).add(cat.name)
+            assert carriers, attr
+            for key, expected in carriers.items():
+                canonical = {c.name for c in house if _cat_has_trait(c, category, key)}
+                optimizer = {c.name for c in house if breeding._cat_has_trait(c, category, key)}
+                assert canonical == expected, (category, key)
+                assert optimizer == expected, (category, key)
+                checked += 1
+        assert checked > 100, checked
+
+    def test_optimizer_desired_trait_bonus_fires_for_planner_keys(self):
+        """A planner-selected mutation must actually reach the optimizer's
+        pair scoring; the bonus used to be silently dead."""
+        from breeding import score_pair
+        cat_a = self._cat(mutations=[("Gem Eyes", "Eye", 303)])
+        cat_b = self._cat()
+        for stub in (cat_a, cat_b):
+            stub.db_key = id(stub) % 10000
+            stub.name = "Stub"
+            stub.gender = "male" if stub is cat_a else "female"
+            stub.sexuality = "straight"
+            stub.base_stats = {s: 5 for s in STAT_NAMES}
+            stub.total_stats = dict(stub.base_stats)
+            stub.aggression = 0.3
+            stub.libido = 0.7
+            stub.lovers = []
+            stub.haters = []
+            stub.parent_a = None
+            stub.parent_b = None
+            stub.must_breed = False
+            stub.generation = 0
+            stub.is_blacklisted = False
+            stub.disorders = []
+            stub.passive_abilities = []
+            stub.abilities = []
+
+        traits = [{"category": "mutation", "key": "gem eyes|303", "weight": 10}]
+        factors = score_pair(
+            cat_a, cat_b, hater_key_map={}, lover_key_map={},
+            avoid_lovers=False, planner_traits=traits,
+        )
+        assert factors.trait_bonus != 0.0
