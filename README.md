@@ -112,7 +112,9 @@ Produces a standalone executable via PyInstaller.
 - The game reuses visual-mutation ids across body parts, and trait matching keyed on the id alone. Defect id 700 is Lobster Claw (arms), Gastroschisis (body), Graves Disease (eyes), Neurofibromatosis (fur) **and** Microcephaly (head) — so selecting any one of them matched the carriers of all five.
 - Measured on a real save: **20 of 21** birth defects listed at least one cat that didn't have the defect; clicking Neurofibromatosis showed 13 cats when exactly 1 carried it. Regular mutations shared the flaw (mutation id 413 is both an ear and a body mutation).
 - Matching now compares the whole `<name>|<id>` key, rebuilt from the cat's own chip data the same way the planner builds catalog keys, so the two can't drift apart. Where a cat has no chip data the fallback requires the name **and** the id to agree — the name alone would accept a key pointing at a different trait.
-- This also affected the Room Optimizer, whose desired-trait and unwanted-disorder rules use the same matching, so those could act on the wrong cats.
+- Every trait-driven Mutation Planner feature was affected, not just the carrier list: the cat-table trait filter, the single-trait carriers list and its recommended pairs, the multi-trait carrier summary, and both the per-cat and per-pair scoring behind **Find Best Pairs**. The Perfect 7 Planner's trait scoring and the donation "missing planner traits" check share the same matcher.
+- **`breeding.py` carried a second, separate copy** of the matcher — the one the Room Optimizer uses for its desired-trait bonus. That copy never handled the `<name>|<id>` key format at all, so it matched **nothing**: selecting a desired mutation or defect had no effect on room-optimizer pair scoring. On the fixture save the bonus now applies to all 2,567 pairs involving a carrier, where before it applied to none. The duplicate is gone — both callers now share one implementation in `save_parser.py`.
+- The optimizer's unwanted-disorder and trait-loss rules were unaffected: they do their own name matching on disorder keys, which carry no id.
 
 ### v5.10.1
 

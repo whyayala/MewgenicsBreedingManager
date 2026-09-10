@@ -817,7 +817,8 @@ class WhatsNewDialog(QDialog):
         default_highlights = highlights or [
             "Fixed a significant Mutation Planner bug: clicking a Birth Defect listed the wrong cats. The game reuses its internal ids across body parts — id 700 alone covers Lobster Claw (arms), Gastroschisis (body), Graves Disease (eyes), Neurofibromatosis (fur) and Microcephaly (head) — and the planner matched on that id alone.",
             "The scale of it: on a real save, clicking Neurofibromatosis listed 13 cats when only 1 actually had it, and 20 of the save's 21 birth defects listed at least one wrong cat. Regular mutations were affected the same way.",
-            "Trait targeting in the Room Optimizer used the same matching, so desired-trait and disorder rules could fire on the wrong cats too.",
+            "It affected every trait-driven part of the planner, not just the carrier list: the cat-table filter, the recommended pairs, the carrier summaries, and the scoring behind Find Best Pairs. The Perfect 7 Planner's trait scoring shared the same flaw.",
+            "Separately, the Room Optimizer had its own copy of the trait matcher that didn't understand the planner's key format at all — so choosing a desired mutation or defect had no effect on room scoring whatsoever. Both now share one implementation, and desired traits actually influence room assignment.",
         ]
 
         root = QVBoxLayout(self)

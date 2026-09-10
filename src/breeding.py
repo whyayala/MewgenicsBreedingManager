@@ -14,6 +14,7 @@ from save_parser import (
     risk_percent,
     shared_ancestor_counts,
     _stimulation_inheritance_weight,
+    cat_has_visual_trait,
 )
 
 logger = logging.getLogger("mewgenics.breeding")
@@ -420,10 +421,18 @@ def tracked_offspring(a: Cat, b: Cat) -> list[Cat]:
 
 
 def _cat_has_trait(cat: Cat, category: str, trait_key: str) -> bool:
+    """Does *cat* carry the planner trait named by *trait_key*?
+
+    Visual mutations and defects go through save_parser's canonical matcher:
+    planner keys for those categories are ``"<name>|<id>"``, and comparing
+    them against the bare name here silently matched nothing, so the room
+    optimizer's desired-trait bonus never fired for them. The remaining
+    categories use name-only keys.
+    """
     if category == "mutation":
-        return any(m.lower() == trait_key for m in getattr(cat, "mutations", []) or [])
+        return cat_has_visual_trait(cat, trait_key, want_defect=False)
     if category == "defect":
-        return any(d.lower() == trait_key for d in getattr(cat, "defects", []) or [])
+        return cat_has_visual_trait(cat, trait_key, want_defect=True)
     if category == "passive":
         return any(p.lower() == trait_key for p in getattr(cat, "passive_abilities", []) or [])
     if category == "disorder":
