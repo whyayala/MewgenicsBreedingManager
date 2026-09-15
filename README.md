@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.10.3`
+Current release: `v5.11.0`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,21 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.11.0
+
+**Fixed: rooms were filled one at a time, so spare capacity left rooms empty.**
+
+Reported as "I cut down to 60 cats and now nothing gets placed in 2nd floor left" — and it happened whatever tree that room was set to, because the room never received a cat to score in the first place.
+
+Cats reached rooms through two orderings, and both filled each room to its cap before touching the next: pairs went to the first room in your priority order that fit, and unpaired cats were parked in the quietest room until it was full. A room therefore got nothing until every room ahead of it in *both* orders was full — so whenever the house had more capacity than cats, the rooms at the tail starved. Cutting the roster is exactly what tips a house over that line.
+
+- Measured on a real save, 4 breeding rooms and 60 cats: **10 / 27 / 0 / 23** before, **10 / 17 / 16 / 17** after. At 93 cats every room was used, at 75 the room thinned to 11, at 60 and below it was empty.
+- Rooms are now ranked by how much Comfort they have given up to crowding, least-crowded first, for pairs and for parked cats alike. Because the first four cats in a room cost no Comfort, an even house sits further from the fight threshold than a packed one at the same headcount.
+- The quiet-room preference survives: rooms tie while they are all still inside their free four, and the tie breaks on stimulation exactly as before, so kittens and unpaired cats still prefer the quietest room — they just stop piling into it past the fourth cat.
+- **More Depth** scores a crowding penalty now, so the annealing pass has no reason to repack what the first pass spread out. The penalty is deliberately small: it settles otherwise-equal layouts rather than outvoting pair quality.
+- Pair counts held or improved in every scenario measured, so the spread does not cost breeding throughput.
+- Throughput mode is unchanged. It packs rooms on purpose to keep pair density high, which is the whole point of that mode.
 
 ### v5.10.3
 

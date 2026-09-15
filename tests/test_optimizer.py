@@ -1200,3 +1200,88 @@ def test_more_depth_respects_capacity_with_pinned_cats():
         cap = assignment.room.max_cats
         if cap is not None:
             assert len(assignment.cats) <= cap, (assignment.room.key, len(assignment.cats))
+
+
+def _spacious_rooms(count: int = 4, *, capacity: int = 20, comfort: float = 24.0):
+    """Breeding rooms with far more capacity between them than any test uses."""
+    keys = ["Floor1_Large", "Floor1_Small", "Floor2_Small", "Floor2_Large"][:count]
+    return [
+        RoomConfig(key, RoomType.BEST_PAIRS, capacity, 20.0 + idx, comfort=comfort)
+        for idx, key in enumerate(keys)
+    ] + [RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=comfort)]
+
+
+def test_spare_capacity_does_not_leave_breeding_rooms_empty():
+    """Rooms used to be filled to capacity one at a time, so whenever the
+    house had more room than cats the rooms at the tail of the fill order got
+    nothing at all. Reported as "2nd floor left is empty after I cut down to
+    60 cats"."""
+    cats = [
+        _make_cat(i, gender="male" if i % 2 else "female", stat_seed=6)
+        for i in range(1, 25)
+    ]
+    rooms = _spacious_rooms()
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+
+    occupancy = {
+        a.room.key: len(a.cats) for a in result.rooms if a.room.room_type.uses_profile
+    }
+    assert all(occupancy.values()), f"a breeding room was left empty: {occupancy}"
+    # 24 cats over 4 rooms: an even spread is 6 apiece. Allow slack for pair
+    # placement, but nothing like the old 20/4/0/0.
+    assert max(occupancy.values()) - min(occupancy.values()) <= 4, occupancy
+
+
+def test_spare_capacity_spread_survives_more_depth():
+    """The SA pass scores a crowding penalty, so it has no reason to undo the
+    spread the greedy pass produced."""
+    cats = [
+        _make_cat(i, gender="male" if i % 2 else "female", stat_seed=6)
+        for i in range(1, 25)
+    ]
+    rooms = _spacious_rooms()
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=True,
+                           sa_chains=1),
+        cache=None, excluded_keys=set(),
+    )
+
+    occupancy = {
+        a.room.key: len(a.cats) for a in result.rooms if a.room.room_type.uses_profile
+    }
+    assert all(occupancy.values()), f"More Depth emptied a breeding room: {occupancy}"
+
+
+def test_balanced_order_keeps_quiet_rooms_first_until_they_fill():
+    """Balancing must not cost kittens and parked cats their quiet-room
+    preference: rooms tie while they are all inside the free four, and the
+    tie breaks on stimulation exactly as before."""
+    loud = RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 20, 90.0, comfort=24.0)
+    quiet = RoomConfig("Floor2_Large", RoomType.BEST_PAIRS, 20, 5.0, comfort=24.0)
+
+    empty = {loud.key: 0, quiet.key: 0}
+    assert [r.key for r in room_optimizer_impl.balanced_room_order([loud, quiet], empty)] == [
+        quiet.key, loud.key
+    ]
+
+    # Once the quiet room has used its free four, the loud one is cheaper.
+    filled = {loud.key: 0, quiet.key: room_optimizer_impl.COMFORT_FREE_CATS}
+    assert [r.key for r in room_optimizer_impl.balanced_room_order([loud, quiet], filled)] == [
+        loud.key, quiet.key
+    ]
+
+
+def test_crowding_after_counts_only_cats_past_the_free_four():
+    crowding_after = room_optimizer_impl.crowding_after
+    free = room_optimizer_impl.COMFORT_FREE_CATS
+    assert crowding_after(0) == 0
+    assert crowding_after(free - 1) == 0
+    assert crowding_after(free) == 1
+    assert crowding_after(free + 5) == 6
+    # Placing a pair costs both of its cats.
+    assert crowding_after(free, added=2) == 2

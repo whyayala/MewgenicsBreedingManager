@@ -815,10 +815,11 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Desired mutations and birth defects now actually influence the Room Optimizer. It had its own private copy of the trait matcher, and that copy compared the planner's <code>name|id</code> keys against a bare trait name — a comparison that can never succeed, so picking a desired trait had no effect on room scoring whatsoever.",
-            "Measured on a real save: with a desired mutation selected, the desired-trait bonus now applies to all 2,567 pairs that involve a carrier, where previously it applied to none.",
-            "This is the mirror image of the v5.10.2 bug. There, id-only matching listed cats that did not carry the trait (false positives in the Mutation Planner); here, full-key matching against a name found nobody at all (false negatives in the Room Optimizer). Same root cause: two copies of one matcher that drifted apart.",
-            "The duplicate is gone \u2014 both the planners and the optimizer now call one shared implementation, so they cannot diverge again. The optimizer's unwanted-disorder and trait-loss rules were never affected; they match disorder names, which carry no id.",
+            "Fixed: the Room Optimizer filled rooms one at a time, so a house with more capacity than cats left whole rooms empty. Reported as \"I cut down to 60 cats and now nothing gets placed in 2nd floor left\" \u2014 and it happened whatever tree that room was set to, because the room never received a cat to score.",
+            "Both paths into a room packed the first one full before touching the next: pairs took the first room in your priority order that fit, and unpaired cats were parked in the quietest room until it was full. Any room behind those in the order got nothing at all.",
+            "Rooms are now ranked by how crowded they already are, least-crowded first. The first four cats in a room cost no Comfort, so an even house sits further from the fight threshold than a packed one holding the same cats. On a real save with 60 cats the split went from 10 / 27 / 0 / 23 to 10 / 17 / 16 / 17.",
+            "Kittens and unpaired cats keep their quiet-room preference \u2014 rooms tie while they are all inside their free four and stimulation still breaks the tie. They just stop piling into one room past the fourth cat.",
+            "More Depth scores a crowding penalty now, so it no longer repacks what the first pass spread out. Throughput mode is unchanged: it packs rooms deliberately to keep pair density high.",
         ]
 
         root = QVBoxLayout(self)

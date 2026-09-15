@@ -149,6 +149,19 @@ def _throughput_density_bonus(valid_pairs: int, total_possible: float, enabled: 
     return math.expm1((density ** 1.5) * valid_pairs)
 
 
+COMFORT_FREE_CATS = 4
+"""Cats a room holds before Comfort starts dropping (-1 per extra cat)."""
+
+CROWDING_PENALTY_WEIGHT = 0.25
+"""Score cost per point of Comfort a state gives up to crowding.
+
+Deliberately small. Packing cats into a few rooms while others sit empty is
+worse for fight risk than spreading them, but SA is here to find good pairs
+— this is a nudge that settles otherwise-equal states, not a term that
+should outvote pair quality.
+"""
+
+
 # ---------------------------------------------------------------------------
 # Pure SA chain
 # ---------------------------------------------------------------------------
@@ -289,6 +302,14 @@ def _sa_chain(
                 else:
                     total_quality += sum_q / total_possible
                     total_quality += _throughput_density_bonus(valid_pairs, total_possible, False)
+
+            # Cats past the free four cost the room a point of Comfort
+            # each. Summing that per room (rather than over the house) is
+            # what makes this prefer an even spread: four cats in each of two
+            # rooms costs nothing, eight in one room costs four.
+            crowding = max(0, effective_count - COMFORT_FREE_CATS)
+            if crowding:
+                total_quality -= crowding * CROWDING_PENALTY_WEIGHT
 
         moved = sum(1 for cid, r in state.items() if r != original_state.get(cid) and r)
         total_quality -= moved * move_penalty_weight

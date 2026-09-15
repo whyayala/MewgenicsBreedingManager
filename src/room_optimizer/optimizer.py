@@ -151,18 +151,19 @@ def _place_in_first_fitting_room(
     *,
     offset: int = 0,
 ) -> bool:
-    """Place *cat* in the first room from *rooms* that has capacity.
+    """Place *cat* in whichever of *rooms* keeps its Comfort highest.
 
-    Rooms are tried starting at ``offset`` so successive cats spread across
-    equally-suitable rooms instead of packing the first one. Returns False
-    when no room has room left, leaving the cat unassigned rather than
+    Rooms are tried in ``balanced_room_order`` so successive cats spread
+    across equally-suitable rooms instead of packing the first one. Returns
+    False when no room has room left, leaving the cat unassigned rather than
     overfilling — the caller reports those as excluded.
+
+    *offset* is accepted for backwards compatibility and ignored: the balance
+    ordering already spreads cats, and rotating it would undo that.
     """
     if not rooms:
         return False
-    count = len(rooms)
-    for step in range(count):
-        room = rooms[(offset + step) % count]
+    for room in balanced_room_order(rooms, room_effective_counts):
         if _can_fit_single(room, room_effective_counts.get(room.key, 0), cat):
             room_assignments[room.key].append(cat)
             room_effective_counts[room.key] = room_effective_counts.get(room.key, 0) + 1
@@ -301,6 +302,54 @@ def comfort_capped_occupancy(comfort: float, comfort_target: float) -> int:
     """
     allowed = int(math.floor(float(comfort) - float(comfort_target))) + COMFORT_FREE_CATS
     return max(COMFORT_FREE_CATS, allowed)
+
+
+def crowding_after(occupancy: int, added: int = 1) -> int:
+    """Comfort a room has given up to crowding once *added* more cats are in.
+
+    Comfort drops 1 per cat beyond the first ``COMFORT_FREE_CATS``, so this
+    is ``0`` while the room is still within its free four and grows by one
+    per cat after that.
+
+    Ranking rooms by this rather than by their resulting Comfort is what
+    keeps a poorly furnished room in the running: a cat placed there costs
+    nothing while the room is under four, so the room takes its share instead
+    of being skipped forever for having less Comfort to begin with. And
+    because it keeps growing with occupancy -- rather than flattening out at
+    one point per cat -- a room that is already full sorts behind an emptier
+    one, which is what actually spreads cats around.
+    """
+    return max(0, occupancy + added - COMFORT_FREE_CATS)
+
+
+def balanced_room_order(
+    rooms: list[RoomConfig],
+    room_effective_counts: dict[str, int],
+) -> list[RoomConfig]:
+    """Order *rooms* cheapest-first by the Comfort one more cat would cost.
+
+    Placement used to walk a fixed order and fill each room to its cap before
+    touching the next, which leaves the rooms at the tail of that order empty
+    whenever the house has spare capacity -- the cats run out first. That is
+    strictly worse than spreading them: the first four cats in a room cost no
+    Comfort at all, so an even house keeps every room further from the fight
+    threshold than a packed one does.
+
+    Rooms tie while they are all still under ``COMFORT_FREE_CATS``, and the
+    tie breaks on stimulation, so kittens and parked unpaired cats keep their
+    preference for the quietest room -- they just stop piling into it past
+    the free four. ``uses_profile`` breaks the remaining ties toward fallback
+    rooms, matching the old nursery order.
+    """
+    return sorted(
+        rooms,
+        key=lambda room: (
+            crowding_after(room_effective_counts.get(room.key, 0)),
+            float(room.base_stim or 0.0),
+            room.room_type.uses_profile,
+            room.key,
+        ),
+    )
 
 
 def apply_comfort_target(
@@ -831,18 +880,13 @@ def optimize_room_distribution(
             fallback_rooms_for_kittens = [
                 room for room in room_configs if not room.room_type.uses_profile
             ]
-            # Quietest room wins, so a full nursery overflows into the
-            # fallback rather than into a loud breeding room. Ties go to the
-            # fallback: with no stimulation advantage to gain there is no
-            # reason to consume a breeding slot.
-            nursery_order = sorted(
-                room_configs,
-                key=lambda room: (
-                    float(room.base_stim or 0.0),
-                    room.room_type.uses_profile,
-                    room.key,
-                ),
-            )
+            # Quietest room wins while rooms are equally comfortable, so a
+            # nursery overflows into the fallback rather than into a loud
+            # breeding room. Ties go to the fallback: with no stimulation
+            # advantage to gain there is no reason to consume a breeding
+            # slot. The order is recomputed per kitten because it depends on
+            # how full each room is by then — the quietest room stops being
+            # the best answer once it has used up its free four.
             # Last resort keeps the old guarantee that kittens are always
             # placed somewhere, even when every room is at capacity.
             overflow_keys = (
@@ -851,7 +895,7 @@ def optimize_room_distribution(
             )
             for i, cat in enumerate(kitten_cats):
                 placed = False
-                for room in nursery_order:
+                for room in balanced_room_order(room_configs, room_effective_counts):
                     if _can_fit_single(room, room_effective_counts[room.key], cat):
                         room_assignments[room.key].append(cat)
                         room_effective_counts[room.key] += 1
@@ -1170,6 +1214,19 @@ def optimize_room_distribution(
                     )
                 else:
                     iter_rooms = list(room_configs)
+                # Prefer rooms that can still take the pair for free. The
+                # first four cats in a room cost no Comfort, so this only
+                # starts reordering once a room is genuinely filling up —
+                # until then the sort is stable and the user's room priority
+                # (or the trait-loss order above) decides, as before. Without
+                # it the top-priority room absorbs pair after pair until it
+                # hits its cap, and the rooms below it stay empty whenever
+                # the house has more capacity than cats.
+                iter_rooms.sort(
+                    key=lambda r: crowding_after(
+                        room_effective_counts.get(r.key, 0), 2
+                    )
+                )
                 for room in iter_rooms:
                     if not room.room_type.uses_profile:
                         continue
@@ -1265,10 +1322,11 @@ def optimize_room_distribution(
         # Throughput mode deliberately keeps non-pairing cats out of breeding
         # rooms so they don't dilute pair density, so only do this in the
         # default mode.
-        quiet_rooms = [] if params.maximize_throughput else sorted(
-            (room for room in room_configs if room.room_type.uses_profile),
-            key=lambda room: (float(room.base_stim or 0.0), room.key),
-        )
+        # Ordered per cat below, since how full each room is by then decides
+        # which one keeps its Comfort highest.
+        quiet_rooms = [] if params.maximize_throughput else [
+            room for room in room_configs if room.room_type.uses_profile
+        ]
         # Cats carrying a disorder that no tree wants are better off in the
         # highest-Health room, where the Health effect can cure it away —
         # unless they are marked Must Breed, in which case the user wants
@@ -1288,7 +1346,7 @@ def optimize_room_distribution(
             ):
                 preferred = healing_rooms
             placed_quiet = False
-            for room in (*preferred, *quiet_rooms):
+            for room in (*preferred, *balanced_room_order(quiet_rooms, room_effective_counts)):
                 if _can_fit_single(room, room_effective_counts[room.key], cat):
                     room_assignments[room.key].append(cat)
                     room_effective_counts[room.key] += 1
