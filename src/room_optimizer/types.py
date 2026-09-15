@@ -99,7 +99,10 @@ class OptimizationParams:
     prefer_low_aggression: bool = True
     prefer_high_libido: bool = True
     mode_family: bool = False
-    use_sa: bool = False
+    # The annealing refinement always runs for real optimizations; the greedy
+    # placement is its seed, not an alternative to it. Kept as a flag purely
+    # so tests can exercise the seed on its own without paying for SA.
+    use_sa: bool = True
     sa_temperature: float = 8.0
     sa_cooling_rate: float = 0.95
     sa_neighbors_per_temp: int = 120

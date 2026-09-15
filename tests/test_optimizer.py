@@ -1560,3 +1560,61 @@ def test_max_risk_still_excludes_inbred_pairs():
         for a in result.rooms for p in a.pairs
     }
     assert (1, 2) not in paired
+
+
+def test_more_depth_never_lands_below_its_own_greedy_seed():
+    """More Depth starts from the greedy placement, so it must never return a
+    worse layout than the one it was handed.
+
+    Its per-room term used to be ``sum_q / total_possible`` — average quality
+    per *possible* pairing, which falls as a room fills whether or not the
+    extra cats pair up. SA was optimising something the app never reports and
+    routinely finished below its own seed: on a 93-cat save, 11 pairs at
+    562.0 total quality against the seed's 13 at 584.9.
+    """
+    cats = [
+        _make_cat(i, gender="male" if i % 2 else "female", stat_seed=6, age=5)
+        for i in range(1, 21)
+    ]
+    rooms = _spacious_rooms()
+
+    def run(use_sa):
+        result = optimize_room_distribution(
+            cats, rooms,
+            OptimizationParams(max_risk=100.0, avoid_lovers=False,
+                               use_sa=use_sa, sa_chains=1),
+            cache=None, excluded_keys=set(),
+        )
+        pairs = [p for a in result.rooms for p in a.pairs]
+        return len(pairs), sum(p.quality for p in pairs)
+
+    seed_pairs, seed_quality = run(False)
+    sa_pairs, sa_quality = run(True)
+
+    assert seed_pairs > 0, "the greedy seed found no pairs, so this proves nothing"
+    assert sa_pairs >= seed_pairs, (
+        f"More Depth lost pairs: {sa_pairs} vs the seed's {seed_pairs}"
+    )
+
+
+def test_sa_objective_ranks_whole_pairs_ahead_of_average_quality():
+    """The SA score must count pairs first, matching the greedy DP's
+    (count, quality, -risk) ordering — not normalise quality by how many
+    pairings a room could theoretically hold."""
+    import inspect
+    import room_optimizer.parallel as par
+
+    body = inspect.getsource(par._sa_chain)
+    scoring = body[body.index("def _state_score"):body.index("def _neighbor")]
+    # Throughput mode keeps its own normalised term, so look only at the
+    # default branch — and at code, not the comment explaining the old form.
+    default_branch = scoring[scoring.index("                else:"):]
+    code = "\n".join(
+        line for line in default_branch.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "sum_q / total_possible" not in code, (
+        "SA is normalising quality by possible pairings again"
+    )
+    assert "valid_pairs * 1000.0" in code
+    assert "total_quality += sum_q" in code

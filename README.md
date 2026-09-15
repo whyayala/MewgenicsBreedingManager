@@ -133,6 +133,15 @@ Each body part resolves to exactly one mutation. One carrier against a plain par
 
 ### v5.11.0
 
+**More Depth is now the only search, and the toggle is gone.**
+
+Every optimizer change since v5.10.0 has had to be made twice — once for the greedy placement and once for the annealing pass — and the annealing half kept getting missed. Removing the choice means the deep search is always exercised, so a divergence shows up immediately instead of only when someone happens to toggle it on.
+
+- **More Depth was losing to its own starting point.** Its per-room score was `sum_q / total_possible` — average quality per *possible* pairing, which falls as a room fills whether or not the extra cats actually pair up. It was optimising something the app never displays, and finished below the greedy state it started from: on a 93-cat save, **11 pairs at 562.0** total quality against the seed's **13 at 584.9**. It now ranks whole pairs first and quality second, the same order the greedy pass's per-room DP already used. Same save: **13 pairs at 584.6**, matching the seed instead of undercutting it. (The remaining 0.3 is the move penalty declining to shuffle cats for no gain.)
+- The greedy pass has not gone anywhere — it is the *seed* the annealing starts from, not an alternative to it. What is gone is the choice, and with it a whole class of "the fix only landed in one of the two passes" bug.
+- Cost on that save: **0.10 s → 4.3 s** at 93 cats. A one-off per Optimize press, and Cancel still works throughout.
+- The Perfect 7 Planner keeps its own More Depth toggle. That is a different annealing implementation over pair lists, not the room solver, and is untouched here.
+
 **Fixed: rooms were filled one at a time, so spare capacity left rooms empty.**
 
 Reported as "I cut down to 60 cats and now nothing gets placed in 2nd floor left" — and it happened whatever tree that room was set to, because the room never received a cat to score in the first place.

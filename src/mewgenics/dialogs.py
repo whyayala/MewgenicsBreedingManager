@@ -815,11 +815,12 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "High-Stimulation rooms now go to the pairs that can use them. Stimulation buys a different amount per trait type \u2014 a passive is only certain at 95 Stimulation, an active already at 32, and a mutation never \u2014 but the desired-trait bonus was a flat number, identical in a dead room and a loud one.",
-            "The bonus now scales with the odds the trait actually reaches the kitten at that room's Stimulation, and pairs are ordered by how much Stimulation they can still convert into an inherited trait. Desired passives get first pick of the loudest rooms, then desired actives.",
-            "Once an active is guaranteed at 32 Stimulation the pair stops competing for louder rooms, leaving them for cats that still benefit. That is deliberate: past 32 an active-carrier gains nothing.",
-            "Mutations: each body part resolves to one mutation, so two carriers of different mutations on the same part is a coin flip no matter how loud the room, while one carrier against a plain part is a Stimulation-biased roll. Pair scoring now prefers the mate that leaves the part clear.",
-            "The mutation odds on pair rows were a flat 80% regardless of Stimulation or what the other parent had. They now follow the real curve \u2014 100% when both parents carry the same mutation, the Stimulation-biased roll against a plain part, 50% when contested.",
+            "More Depth is now the only Room Optimizer search and the toggle is gone. Every optimizer change since v5.10.0 had to be made twice, once for each pass, and the deep-search half kept getting missed \u2014 so now it always runs and a divergence shows up immediately.",
+            "More Depth had been losing to its own starting point. It scored rooms on average quality per *possible* pairing, which falls as a room fills whether or not the extra cats pair up, so it optimised something the app never displays. On a 93-cat save it finished with 11 pairs where the greedy seed it started from had 13.",
+            "It now ranks whole pairs first and quality second \u2014 the same order the greedy pass already used. Same save: 13 pairs, matching the seed instead of undercutting it.",
+            "High-Stimulation rooms now go to the pairs that can use them. A passive is only certain at 95 Stimulation, an active already at 32, a mutation never; the desired-trait bonus was a flat number, identical in a dead room and a loud one. It now scales with the odds the trait reaches the kitten in that room.",
+            "Mutations: each body part resolves to one mutation, so two carriers of different mutations on the same part is a coin flip no matter how loud the room. Pair scoring prefers the mate that leaves the part clear, and the pair-row mutation odds now follow the real curve instead of a flat 80%.",
+            "Rooms are also no longer filled one at a time \u2014 a house with more capacity than cats used to leave whole rooms empty.",
         ]
 
         root = QVBoxLayout(self)

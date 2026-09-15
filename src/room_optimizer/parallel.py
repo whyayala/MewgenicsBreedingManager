@@ -300,7 +300,19 @@ def _sa_chain(
                     total_quality += sum_q / total_possible
                     total_quality += _throughput_density_bonus(valid_pairs, total_possible, True)
                 else:
-                    total_quality += sum_q / total_possible
+                    # Rank whole pairs first, then their quality — the same
+                    # order the greedy pass's per-room DP uses
+                    # (_matching_result_key is (count, quality, -risk)).
+                    #
+                    # This used to be `sum_q / total_possible`: average
+                    # quality per *possible* pairing, which falls as a room
+                    # fills whether or not the extra cats pair up. SA was
+                    # therefore optimising something the rest of the app
+                    # never reports, and routinely landed below the greedy
+                    # state it started from — on a 93-cat save, 11 pairs at
+                    # 562.0 total quality against the seed's 13 at 584.9.
+                    total_quality += valid_pairs * 1000.0
+                    total_quality += sum_q
                     total_quality += _throughput_density_bonus(valid_pairs, total_possible, False)
 
             # Cats past the free four cost the room a point of Comfort
