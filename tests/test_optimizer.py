@@ -1618,3 +1618,63 @@ def test_sa_objective_ranks_whole_pairs_ahead_of_average_quality():
     )
     assert "valid_pairs * 1000.0" in code
     assert "total_quality += sum_q" in code
+
+
+def test_disorders_do_not_scale_with_stimulation():
+    """Disorders are list traits like passives, and each parent rolls a flat
+    15% to pass one down. The wiki is explicit that the roll is "not affected
+    by furniture or Stimulation" — it fell through to the mutation curve and
+    was reported as 50% rising to 66%."""
+    from breeding import trait_inheritance_chance, DISORDER_INHERITANCE_CHANCE
+
+    for stim in (-50.0, 0.0, 32.0, 95.0, 200.0):
+        assert trait_inheritance_chance("disorder", stim) == pytest.approx(
+            DISORDER_INHERITANCE_CHANCE
+        ), stim
+    assert DISORDER_INHERITANCE_CHANCE == pytest.approx(0.15)
+
+
+def test_a_disorder_pair_does_not_compete_for_the_loud_room():
+    """A pair wanted only for a disorder gains nothing from Stimulation, so it
+    must not outrank a passive-carrier for the high-Stimulation room."""
+    import breeding
+
+    traits = [
+        {"category": "passive", "key": "library", "weight": 10, "display": "Library"},
+        {"category": "disorder", "key": "ocd", "weight": 10, "display": "OCD"},
+    ]
+
+    passive_carrier = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5)
+    passive_carrier.passive_abilities = ["Library"]
+    disorder_carrier = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5,
+                                 disorders=["OCD"])
+    mates = [
+        _make_cat(k, gender="female", sexuality="bi", stat_seed=7, age=5) for k in (2, 4)
+    ]
+
+    assert breeding.desired_trait_stim_need(disorder_carrier, mates[0], traits) == 0.0
+    assert breeding.desired_trait_stim_need(passive_carrier, mates[1], traits) > 0.0
+
+    rooms = [
+        RoomConfig("Quiet", RoomType.BEST_PAIRS, 2, 0.0, comfort=24.0),
+        RoomConfig("Loud", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+    result = optimize_room_distribution(
+        [passive_carrier, disorder_carrier, *mates], rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False,
+                           mode_profiles={"best_pairs": {"traits": traits,
+                                                         "stat_priority": []}}),
+        cache=None, excluded_keys=set(),
+    )
+    assert _room_for_cat(result, 1) == "Loud"
+    assert _room_for_cat(result, 3) == "Quiet"
+
+
+def test_disorder_and_defect_names_never_overlap():
+    """The two categories are disjoint in the save format, which is why they
+    need separate inheritance models. Guards against a future refactor
+    folding `cat.defects` into `cat.disorders`."""
+    cat = _make_cat(1, gender="male", disorders=["OCD"])
+    cat.defects = ["Lobster Claw"]
+    assert not (set(cat.disorders) & set(cat.defects))
