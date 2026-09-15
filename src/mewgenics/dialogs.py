@@ -815,11 +815,11 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Fixed: the Room Optimizer filled rooms one at a time, so a house with more capacity than cats left whole rooms empty. Reported as \"I cut down to 60 cats and now nothing gets placed in 2nd floor left\" \u2014 and it happened whatever tree that room was set to, because the room never received a cat to score.",
-            "Both paths into a room packed the first one full before touching the next: pairs took the first room in your priority order that fit, and unpaired cats were parked in the quietest room until it was full. Any room behind those in the order got nothing at all.",
-            "Rooms are now ranked by how crowded they already are, least-crowded first. The first four cats in a room cost no Comfort, so an even house sits further from the fight threshold than a packed one holding the same cats. On a real save with 60 cats the split went from 10 / 27 / 0 / 23 to 10 / 17 / 16 / 17.",
-            "Kittens and unpaired cats keep their quiet-room preference \u2014 rooms tie while they are all inside their free four and stimulation still breaks the tie. They just stop piling into one room past the fourth cat.",
-            "More Depth scores a crowding penalty now, so it no longer repacks what the first pass spread out. Throughput mode is unchanged: it packs rooms deliberately to keep pair density high.",
+            "High-Stimulation rooms now go to the pairs that can use them. Stimulation buys a different amount per trait type \u2014 a passive is only certain at 95 Stimulation, an active already at 32, and a mutation never \u2014 but the desired-trait bonus was a flat number, identical in a dead room and a loud one.",
+            "The bonus now scales with the odds the trait actually reaches the kitten at that room's Stimulation, and pairs are ordered by how much Stimulation they can still convert into an inherited trait. Desired passives get first pick of the loudest rooms, then desired actives.",
+            "Once an active is guaranteed at 32 Stimulation the pair stops competing for louder rooms, leaving them for cats that still benefit. That is deliberate: past 32 an active-carrier gains nothing.",
+            "Mutations: each body part resolves to one mutation, so two carriers of different mutations on the same part is a coin flip no matter how loud the room, while one carrier against a plain part is a Stimulation-biased roll. Pair scoring now prefers the mate that leaves the part clear.",
+            "The mutation odds on pair rows were a flat 80% regardless of Stimulation or what the other parent had. They now follow the real curve \u2014 100% when both parents carry the same mutation, the Stimulation-biased roll against a plain part, 50% when contested.",
         ]
 
         root = QVBoxLayout(self)

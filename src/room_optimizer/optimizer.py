@@ -7,7 +7,13 @@ from dataclasses import replace
 from functools import lru_cache
 from typing import Iterable
 
-from breeding import PairFactors, is_hater_conflict, is_mutual_lover_pair, score_pair as score_pair_factors
+from breeding import (
+    PairFactors,
+    desired_trait_stim_need,
+    is_hater_conflict,
+    is_mutual_lover_pair,
+    score_pair as score_pair_factors,
+)
 from save_parser import Cat, FurnitureRoomSummary, ROOM_DISPLAY, STAT_NAMES
 from mewgenics.utils.planner_state import _normalize_mutation_mode_profiles
 
@@ -456,6 +462,25 @@ def build_room_configs(
 def _normalized_mode_profiles(params: OptimizationParams) -> dict[str, dict]:
     profiles = _normalize_mutation_mode_profiles(getattr(params, "mode_profiles", {}) or {}, legacy_traits=getattr(params, "planner_traits", []))
     return profiles
+
+
+def _all_profile_traits(params: OptimizationParams) -> list[dict]:
+    """Every desired trait across all room profiles, de-duplicated.
+
+    Pairs are ranked for Stimulation appetite before a room is picked for
+    them, so there is no single profile to consult yet — a pair carrying a
+    desired passive should reach a loud room whichever tree wants it.
+    """
+    seen: set[tuple[str, str]] = set()
+    traits: list[dict] = []
+    for profile in _normalized_mode_profiles(params).values():
+        for trait in profile.get("traits", []) or ():
+            ident = (str(trait.get("category", "")), str(trait.get("key", "")))
+            if ident in seen or not ident[1]:
+                continue
+            seen.add(ident)
+            traits.append(trait)
+    return traits
 
 
 def _profile_for_room(params: OptimizationParams, room: RoomConfig) -> dict:
@@ -1138,6 +1163,7 @@ def optimize_room_distribution(
         candidate_pairs = [p for p in candidate_pairs if p[0].db_key not in assigned_cats and p[1].db_key not in assigned_cats]
 
         lover_locked: set[int] = has_mutual_lover if params.avoid_lovers else set()
+        _sortable_traits = _all_profile_traits(params)
         pairs_with_scores: list[dict] = []
         for pair_idx, (cat_a, cat_b) in enumerate(candidate_pairs):
             if pair_idx % 200 == 0 and _cancelled():
@@ -1153,6 +1179,9 @@ def optimize_room_distribution(
                     "cat_a": cat_a,
                     "cat_b": cat_b,
                     "risk": factors.risk,
+                    "stim_need": desired_trait_stim_need(
+                        cat_a, cat_b, _sortable_traits
+                    ),
                     "avg_stats": sum(cat_a.base_stats[s] + cat_b.base_stats[s] for s in STAT_NAMES) / (2 * len(STAT_NAMES)),
                     "quality": factors.quality,
                     "must_breed_bonus": factors.must_breed_bonus,
@@ -1160,8 +1189,18 @@ def optimize_room_distribution(
                 }
             )
 
+        # Pairs that can still convert Stimulation into an inherited trait go
+        # first, so they reach the loud rooms before the pairs that gain
+        # nothing from them. A desired passive needs 95 Stimulation to be
+        # certain and an active only 32, so this naturally orders
+        # passive-carriers ahead of active-carriers ahead of everyone else.
         pairs_with_scores.sort(
-            key=lambda p: (p["must_breed_bonus"], p["lover_bonus"], p["quality"]),
+            key=lambda p: (
+                p["must_breed_bonus"],
+                p["lover_bonus"],
+                p["stim_need"],
+                p["quality"],
+            ),
             reverse=True,
         )
 
@@ -1222,9 +1261,18 @@ def optimize_room_distribution(
                 # it the top-priority room absorbs pair after pair until it
                 # hits its cap, and the rooms below it stay empty whenever
                 # the house has more capacity than cats.
+                # Crowding first (see balanced_room_order), then the room
+                # this pair actually does best in. Several rooms share a
+                # crowding level for most of the fill, so this is what hands
+                # the high-Stimulation rooms to the pairs carrying desired
+                # passives — their trait bonus scales with the room's
+                # Stimulation, while an active-carrier's is already maxed out
+                # at 32 and a mutation-carrier's barely moves.
                 iter_rooms.sort(
-                    key=lambda r: crowding_after(
-                        room_effective_counts.get(r.key, 0), 2
+                    key=lambda r: (
+                        crowding_after(room_effective_counts.get(r.key, 0), 2),
+                        -_score_pair_cached(a, b, r, r.base_stim).quality
+                        if r.room_type.uses_profile else 0.0,
                     )
                 )
                 for room in iter_rooms:

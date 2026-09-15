@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.11.0`
+Current release: `v5.12.0`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,29 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.12.0
+
+**High-Stimulation rooms now go to the pairs that can actually use them.**
+
+Stimulation buys a different amount depending on what you are trying to pass down, and the optimizer was ignoring that entirely — the desired-trait bonus was a flat number, identical in a dead room and a loud one, so nothing pulled a pair toward the Stimulation it needed. Per the wiki's Breeding page:
+
+| Trait | Inheritance chance | Certain at |
+|---|---|---|
+| Passive ability | 5% + 1% × Stim | **95 Stim** |
+| Active ability (first) | 20% + 2.5% × Stim | **32 Stim** |
+| Visual mutation | 50% + 50% × Stim/(200 + \|Stim\|) | never |
+
+- The desired-trait bonus is now scaled by the odds that trait actually reaches the kitten **at that room's Stimulation**. A pair carrying a desired passive keeps gaining all the way to 95; an active-carrier stops caring past 32; a mutation-carrier is already past halfway at 0 Stimulation and creeps up slowly. Ranking rooms this way hands the loudest rooms to the passive-carriers first, then the active-carriers — which is the order the wiki implies.
+- Pairs are also **ordered** by how much Stimulation they can still convert into an inherited trait, so the stim-hungry pairs get first pick rather than whoever happened to score highest overall.
+- Once an active is guaranteed the pair stops competing for louder rooms, so a room above 32 Stimulation is free to go to someone who still benefits. That is deliberate — more Stimulation buys an active-carrier nothing.
+
+**Mutations: two carriers can be worse than one.**
+
+Each body part resolves to exactly one mutation. One carrier against a plain part is a Stimulation-biased roll that a loud room can push most of the way; two carriers of *different* mutations on the same part is a coin flip that no amount of Stimulation changes.
+
+- Pair scoring now penalises a desired mutation whose mate holds a different mutation on that same body part, so the optimizer prefers pairing a carrier with a cat that leaves the part clear.
+- The mutation odds shown on pair rows were a flat 80% regardless of Stimulation, room, or what the other parent had. They now follow the real curve: 100% when both parents carry the same mutation, the Stimulation-biased roll against a plain part, and 50% when the part is contested.
 
 ### v5.11.0
 

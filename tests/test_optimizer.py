@@ -1,5 +1,7 @@
 import os
 import sys
+
+import pytest
 from types import SimpleNamespace
 
 _proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1285,3 +1287,126 @@ def test_crowding_after_counts_only_cats_past_the_free_four():
     assert crowding_after(free + 5) == 6
     # Placing a pair costs both of its cats.
     assert crowding_after(free, added=2) == 2
+
+
+def _stim_tiered_rooms():
+    """Three breeding rooms that differ only in Stimulation, plus a fallback.
+
+    Two slots each, so exactly one pair fits per room and the room a pair
+    lands in is the room it was actually given priority for.
+    """
+    return [
+        RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 2, 5.0, comfort=24.0),
+        RoomConfig("Floor1_Small", RoomType.BEST_PAIRS, 2, 40.0, comfort=24.0),
+        RoomConfig("Floor2_Large", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+
+
+def _trait_carrier_pairs():
+    """Six cats: one carrier of each desired category, plus a plain mate each.
+
+    The optimizer re-pairs freely, so the assertions key on where each
+    *carrier* lands rather than on which mate it ends up with.
+    """
+    passive_carrier = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5)
+    passive_carrier.passive_abilities = ["Library"]
+    active_carrier = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5)
+    active_carrier.abilities = ["Fireball"]
+    mutation_carrier = _make_cat(5, gender="male", sexuality="bi", stat_seed=7, age=5,
+                                 mutations=["Spotted"])
+
+    mates = [
+        _make_cat(k, gender="female", sexuality="bi", stat_seed=7, age=5)
+        for k in (2, 4, 6)
+    ]
+
+    profiles = {
+        "best_pairs": {
+            "traits": [
+                {"category": "passive", "key": "library", "weight": 10, "display": "Library"},
+                {"category": "ability", "key": "fireball", "weight": 10, "display": "Fireball"},
+                {"category": "mutation", "key": "spotted", "weight": 10, "display": "Spotted"},
+            ],
+            "stat_priority": [],
+        },
+    }
+    return [passive_carrier, active_carrier, mutation_carrier, *mates], profiles
+
+
+def test_desired_passives_get_the_loudest_room_then_actives():
+    """Wiki: a passive is certain only at 95 Stimulation, an active already at
+    32, and a mutation never. So the loudest room is worth most to the pair
+    carrying a desired passive, next to the active-carriers, and least to the
+    mutation-carriers — which is the order rooms are handed out in."""
+    cats, profiles = _trait_carrier_pairs()
+    result = optimize_room_distribution(
+        cats, _stim_tiered_rooms(),
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False,
+                           mode_profiles=profiles),
+        cache=None, excluded_keys=set(),
+    )
+
+    stim_by_room = {a.room.key: a.room.base_stim for a in result.rooms}
+    passive_stim = stim_by_room[_room_for_cat(result, 1)]
+    active_stim = stim_by_room[_room_for_cat(result, 3)]
+    mutation_stim = stim_by_room[_room_for_cat(result, 5)]
+
+    assert passive_stim == 95.0, f"passive carrier landed at {passive_stim} Stim"
+    assert passive_stim > active_stim > mutation_stim, (
+        passive_stim, active_stim, mutation_stim
+    )
+
+
+def test_active_carrier_takes_the_loud_room_when_it_is_that_or_nothing():
+    """With no room at the active's 32-Stimulation guarantee, the
+    active-carrier must still outrank a mutation-carrier for the loud one."""
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 2, 5.0, comfort=24.0),
+        RoomConfig("Floor2_Large", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+    active_carrier = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5)
+    active_carrier.abilities = ["Fireball"]
+    mutation_carrier = _make_cat(5, gender="male", sexuality="bi", stat_seed=7, age=5,
+                                 mutations=["Spotted"])
+    mates = [
+        _make_cat(k, gender="female", sexuality="bi", stat_seed=7, age=5) for k in (4, 6)
+    ]
+    profiles = {
+        "best_pairs": {
+            "traits": [
+                {"category": "ability", "key": "fireball", "weight": 10, "display": "Fireball"},
+                {"category": "mutation", "key": "spotted", "weight": 10, "display": "Spotted"},
+            ],
+            "stat_priority": [],
+        },
+    }
+
+    result = optimize_room_distribution(
+        [active_carrier, mutation_carrier, *mates], rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False,
+                           mode_profiles=profiles),
+        cache=None, excluded_keys=set(),
+    )
+    assert _room_for_cat(result, 3) == "Floor2_Large"
+    assert _room_for_cat(result, 5) == "Floor1_Large"
+
+
+def test_trait_inheritance_chance_matches_the_wiki_thresholds():
+    from breeding import trait_inheritance_chance
+
+    # Passive: 5% + 1% x Stim, certain at 95.
+    assert trait_inheritance_chance("passive", 0.0) == pytest.approx(0.05)
+    assert trait_inheritance_chance("passive", 95.0) == pytest.approx(1.0)
+    assert trait_inheritance_chance("passive", 94.0) < 1.0
+
+    # Active: 20% + 2.5% x Stim, certain at 32.
+    assert trait_inheritance_chance("ability", 0.0) == pytest.approx(0.20)
+    assert trait_inheritance_chance("ability", 32.0) == pytest.approx(1.0)
+    assert trait_inheritance_chance("ability", 31.0) < 1.0
+
+    # Mutation: an even roll at 0 Stimulation, asymptotic after — never
+    # certain, however loud the room.
+    assert trait_inheritance_chance("mutation", 0.0) == pytest.approx(0.5)
+    assert trait_inheritance_chance("mutation", 1000.0) < 1.0

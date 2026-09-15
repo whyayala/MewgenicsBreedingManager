@@ -1,6 +1,8 @@
 import os
 import sys
 from types import SimpleNamespace
+import pytest
+
 
 _proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _src_dir = os.path.join(_proj_root, "src")
@@ -232,8 +234,86 @@ def test_score_pair_trait_bonus_uses_planner_traits():
         ],
     )
 
-    assert factors.trait_bonus == 20.0
+    # The bonus is scaled by each category's chance of actually reaching the
+    # kitten at this room's Stimulation (50 by default), so the four traits no
+    # longer contribute a flat 5.0 apiece:
+    #   ability  0.20 + 0.025*50 = 1.45 -> capped at 1.00 -> 5.00
+    #   passive  0.05 + 0.01*50  = 0.55               -> 2.75
+    #   mutation/disorder  (1 + .01*50) / (2 + .01*50) = 0.60 -> 3.00 each
+    assert factors.trait_bonus == pytest.approx(13.75)
     assert factors.quality > 0.0
+
+
+def test_trait_bonus_rewards_stimulation_where_the_category_still_gains():
+    """Wiki: a passive is certain only at 95 Stimulation, an active already at
+    32. So a desired passive keeps gaining from a louder room well past the
+    point where a desired active has stopped caring — which is what makes one
+    pair worth the high-Stimulation room more than another."""
+
+    def _bonus(category: str, stim: float) -> float:
+        cat_a = _make_cat(1, gender="male", sexuality="bi")
+        cat_b = _make_cat(2, gender="female", sexuality="straight")
+        cat_a.abilities = ["Fireball"]
+        cat_a.passive_abilities = ["Library"]
+        cat_a.mutations = ["Spotted"]
+        key = {"ability": "fireball", "passive": "library", "mutation": "spotted"}[category]
+        return score_pair(
+            cat_a, cat_b,
+            hater_key_map={1: set(), 2: set()},
+            lover_key_map={1: set(), 2: set()},
+            avoid_lovers=False,
+            stimulation=stim,
+            planner_traits=[{"category": category, "key": key, "weight": 10}],
+        ).trait_bonus
+
+    # A passive is the category with the most left to gain between a dead room
+    # and a loud one, so it must outrank the others on that gain.
+    passive_gain = _bonus("passive", 90.0) - _bonus("passive", 10.0)
+    active_gain = _bonus("ability", 90.0) - _bonus("ability", 10.0)
+    mutation_gain = _bonus("mutation", 90.0) - _bonus("mutation", 10.0)
+    assert passive_gain > active_gain > mutation_gain > 0.0
+
+    # An active is already certain at 32, so more Stimulation buys nothing.
+    assert _bonus("ability", 32.0) == pytest.approx(_bonus("ability", 200.0))
+    # A passive is not certain until 95.
+    assert _bonus("passive", 32.0) < _bonus("passive", 95.0)
+
+
+def test_desired_mutation_prefers_a_mate_without_one_on_that_body_part():
+    """Each body part resolves to one mutation. One carrier against a plain
+    part is a Stimulation-biased roll; two carriers of *different* mutations
+    on the same part is a coin flip no matter how loud the room."""
+    from breeding import desired_trait_stim_need  # noqa: F401  (import guard)
+
+    def _pair(mate_entries):
+        carrier = _make_cat(1, gender="male", sexuality="bi")
+        mate = _make_cat(2, gender="female", sexuality="straight")
+        carrier.mutations = ["Spotted"]
+        carrier.visual_mutation_entries = [
+            {"slot_key": "ears", "name": "Spotted", "is_defect": False, "mutation_id": 413},
+        ]
+        mate.visual_mutation_entries = mate_entries
+        mate.mutations = [e["name"] for e in mate_entries]
+        return score_pair(
+            carrier, mate,
+            hater_key_map={1: set(), 2: set()},
+            lover_key_map={1: set(), 2: set()},
+            avoid_lovers=False,
+            stimulation=90.0,
+            planner_traits=[{"category": "mutation", "key": "spotted", "weight": 10}],
+        ).trait_bonus
+
+    clear_mate = _pair([])
+    conflicting_mate = _pair(
+        [{"slot_key": "ears", "name": "Curled", "is_defect": False, "mutation_id": 414}]
+    )
+    other_part = _pair(
+        [{"slot_key": "tail", "name": "Curled", "is_defect": False, "mutation_id": 414}]
+    )
+
+    assert conflicting_mate < clear_mate
+    # A mutation on a different body part does not compete for the same slot.
+    assert other_part == clear_mate
 
 
 def test_score_pair_trait_bonus_includes_birth_defects():
@@ -253,7 +333,9 @@ def test_score_pair_trait_bonus_includes_birth_defects():
         ],
     )
 
-    assert factors.trait_bonus == 5.0
+    # 5.0 scaled by the part-comparison chance at the default Stimulation of
+    # 50: (1 + .01*50) / (2 + .01*50) = 0.60.
+    assert factors.trait_bonus == pytest.approx(3.0)
 
 
 def test_neutral_gender_ignores_both_orientations():
