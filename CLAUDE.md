@@ -229,12 +229,31 @@ hardcoded constants predate the 1.1 balance overhaul.
 | Active ability (first) | `20% + 2.5% × Stim` | **32 Stim** | same |
 | Active ability (second) | `2% + 0.5% × Stim` | 196 Stim | `utils/abilities.py` display only |
 | Visual mutation / stat | `50% + 50% × Stim/(200 + \|Stim\|)` | never | `save_parser._stimulation_inheritance_weight` |
-| Birth defect | rolls at `Stim − 2 × inbreeding%` | — | `save_parser._defect_inheritance_weight` |
+| **Disorder** | **flat 15% per parent** | **n/a — Stimulation does nothing** | `breeding.DISORDER_INHERITANCE_CHANCE` |
+| Visual birth defect | part roll at `Stim − 2 × inbreeding%` | — | `save_parser._defect_inheritance_weight` (see caveat) |
 
 The differing thresholds are the whole reason the optimizer ranks rooms per
 pair: a desired passive keeps gaining right up to 95 Stimulation, an active
 stops caring past 32, and a mutation is already past halfway at 0. A flat
 trait bonus makes every room look identical and the ordering collapses.
+
+**Disorders are not birth defects, whatever the wiki calls them.** `cat.disorders`
+(OCD, Anemia, Dwarfism, Schizophrenia) are list traits like passives: each
+parent rolls a flat 15% to pass one random disorder from their own list, and
+the roll ignores furniture and Stimulation entirely. `cat.defects` are visual
+birth defects occupying a body-part slot (Lobster Claw, Cleft Pallet, Forked
+Tail) and inherit through the part comparison. The two never overlap — on a
+real save the 72 disorder names and 56 defect names share not one entry. The
+wiki muddles the terminology (it calls some disorders "Birth Defect
+Disorders"); the mechanics are distinct.
+
+> **Caveat on `_defect_inheritance_weight`.** It returns a value that *falls*
+> as inbreeding rises, which matches the wiki's "Ordinary vs. Birth Defect"
+> formula — that is the chance the **ordinary** part wins, i.e. of *avoiding*
+> the defect. But its docstring and `views/mutation_planner.py` both present
+> it as the chance of *inheriting* one. One of the two is inverted and it has
+> not been settled, so `trait_inheritance_chance` deliberately leaves defects
+> on the plain curve rather than build on it.
 
 **Body parts hold one mutation each.** One carrier against a plain part is the
 Stimulation-biased roll above; two carriers of *different* mutations on the

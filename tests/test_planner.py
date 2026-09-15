@@ -239,8 +239,9 @@ def test_score_pair_trait_bonus_uses_planner_traits():
     # longer contribute a flat 5.0 apiece:
     #   ability  0.20 + 0.025*50 = 1.45 -> capped at 1.00 -> 5.00
     #   passive  0.05 + 0.01*50  = 0.55               -> 2.75
-    #   mutation/disorder  (1 + .01*50) / (2 + .01*50) = 0.60 -> 3.00 each
-    assert factors.trait_bonus == pytest.approx(13.75)
+    #   mutation (1 + .01*50) / (2 + .01*50) = 0.60   -> 3.00
+    #   disorder a flat 0.15, whatever the room        -> 0.75
+    assert factors.trait_bonus == pytest.approx(11.50)
     assert factors.quality > 0.0
 
 

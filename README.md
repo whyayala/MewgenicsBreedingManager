@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.12.0`
+Current release: `v5.12.1`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,16 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.12.1
+
+**Fixed: desired disorders were treated as if a louder room helped.**
+
+Disorders inherit on a flat **15% roll per parent**, and the [wiki's Breeding page](https://mewgenics.wiki.gg/wiki/Breeding) is explicit that it is *"not affected by furniture or Stimulation"*. The optimizer's trait model had no disorder branch, so a disorder fell through to the visual-mutation curve and was scored as 50% in a dead room rising to 66% in a loud one.
+
+- The practical effect: a pair wanted only for a desired disorder competed for the high-Stimulation rooms, crowding out the passive-carriers that actually convert Stimulation into inherited traits. Its Stimulation appetite is now zero by construction, so it no longer bids for a room it cannot use.
+- **Disorders are not visual birth defects**, whatever the wiki's naming suggests. `cat.disorders` (OCD, Anemia, Dwarfism) are list traits like passives; `cat.defects` (Lobster Claw, Cleft Pallet, Forked Tail) occupy a body-part slot and roll through the part comparison. On a real save the 72 disorder names and 56 defect names share not one entry — only the disorder half was wrong here.
+- Left alone deliberately: `_defect_inheritance_weight` returns a value that *falls* as inbreeding rises, which reads as the chance of the ordinary part winning — of *avoiding* the defect — while its docstring and the Mutation Planner both present it as the chance of inheriting one. One of the two is inverted. Wiring it into pair scoring before that is settled risks flipping the desired-defect bonus, so defects keep the behaviour they had.
 
 ### v5.12.0
 

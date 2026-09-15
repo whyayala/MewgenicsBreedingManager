@@ -592,20 +592,50 @@ PASSIVE_INHERITANCE_PER_STIM = 0.01
 ACTIVE_INHERITANCE_BASE = 0.20
 ACTIVE_INHERITANCE_PER_STIM = 0.025
 
+DISORDER_INHERITANCE_CHANCE = 0.15
+"""Per-parent chance a disorder passes down. Flat — Stimulation does nothing.
 
-def trait_inheritance_chance(category: str, stimulation: float) -> float:
+Disorders (OCD, Anemia, Dwarfism, Schizophrenia...) are list traits like
+passives, and each parent rolls 15% independently to pass one random disorder
+from their own list. The wiki's Breeding page is explicit that "this
+inheritance is not affected by furniture or Stimulation", which makes it the
+one desired-trait category a louder room cannot help with.
+
+Not to be confused with the ``defect`` category. Those are visual birth
+defects occupying a body-part slot (Lobster Claw, Cleft Pallet, Forked Tail)
+and they inherit through the part comparison below, biased by inbreeding. The
+two never overlap: on a real save the 72 disorder names and 56 defect names
+share not one entry.
+"""
+
+
+def trait_inheritance_chance(
+    category: str, stimulation: float, coi: float = 0.0,
+) -> float:
     """Chance a trait of *category* passes down at *stimulation*.
 
-    Mutations and defects use the part-comparison curve from save_parser
-    (50/50 at 0 Stimulation, asymptotic after); abilities and passives use
-    their own linear ramps. Anything unrecognised falls back to the part
-    curve, which is the least opinionated of the three.
+    - ``passive`` / ``ability``: their own linear ramps, certain at 95 and 32
+      Stimulation respectively.
+    - ``disorder``: a flat 15%, whatever the room.
+    - ``mutation``, ``defect`` and anything unrecognised: the plain part
+      comparison, 50/50 at 0 Stimulation and asymptotic after.
+
+    *coi* is accepted for the defect case but not yet used. Birth defects are
+    meant to roll at an effective Stimulation of ``stim - 2 x inbreeding%``,
+    but ``save_parser._defect_inheritance_weight`` *falls* as inbreeding rises,
+    which reads as the chance of the ordinary part winning — i.e. of AVOIDING
+    the defect — while its own docstring and the Mutation Planner both present
+    it as the chance of inheriting one. Until that is settled, wiring it in
+    here risks inverting the desired-defect bonus, so defects stay on the
+    plain curve.
     """
     stim = float(stimulation)
     if category == "passive":
         return max(0.0, min(1.0, PASSIVE_INHERITANCE_BASE + PASSIVE_INHERITANCE_PER_STIM * stim))
     if category == "ability":
         return max(0.0, min(1.0, ACTIVE_INHERITANCE_BASE + ACTIVE_INHERITANCE_PER_STIM * stim))
+    if category == "disorder":
+        return DISORDER_INHERITANCE_CHANCE
     return _stimulation_inheritance_weight(stim)
 
 
@@ -661,7 +691,10 @@ def desired_trait_stim_need(
         if not (_cat_has_trait(a, category, key) or _cat_has_trait(b, category, key)):
             continue
         weight = float(t.get("weight", 0)) / 10.0
-        # Headroom between a dead room and a loud one, per category.
+        # Headroom between a dead room and a loud one, per category. A
+        # disorder's is zero by construction — its 15% roll ignores the room —
+        # so a pair wanted only for a disorder never competes for the loud
+        # rooms the passive-carriers need.
         headroom = (
             trait_inheritance_chance(category, 100.0)
             - trait_inheritance_chance(category, 0.0)

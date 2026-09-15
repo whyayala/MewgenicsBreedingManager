@@ -815,12 +815,9 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "More Depth is now the only Room Optimizer search and the toggle is gone. Every optimizer change since v5.10.0 had to be made twice, once for each pass, and the deep-search half kept getting missed \u2014 so now it always runs and a divergence shows up immediately.",
-            "More Depth had been losing to its own starting point. It scored rooms on average quality per *possible* pairing, which falls as a room fills whether or not the extra cats pair up, so it optimised something the app never displays. On a 93-cat save it finished with 11 pairs where the greedy seed it started from had 13.",
-            "It now ranks whole pairs first and quality second \u2014 the same order the greedy pass already used. Same save: 13 pairs, matching the seed instead of undercutting it.",
-            "High-Stimulation rooms now go to the pairs that can use them. A passive is only certain at 95 Stimulation, an active already at 32, a mutation never; the desired-trait bonus was a flat number, identical in a dead room and a loud one. It now scales with the odds the trait reaches the kitten in that room.",
-            "Mutations: each body part resolves to one mutation, so two carriers of different mutations on the same part is a coin flip no matter how loud the room. Pair scoring prefers the mate that leaves the part clear, and the pair-row mutation odds now follow the real curve instead of a flat 80%.",
-            "Rooms are also no longer filled one at a time \u2014 a house with more capacity than cats used to leave whole rooms empty.",
+            "Fixed: the Room Optimizer treated a desired disorder as something a louder room could help with. Disorders inherit on a flat 15% roll per parent, and the wiki is explicit that it is not affected by furniture or Stimulation \u2014 but with no disorder branch in the trait model they fell through to the visual-mutation curve and scored 50% rising to 66%.",
+            "The effect was that a pair wanted only for a disorder competed for the high-Stimulation rooms, crowding out the passive-carriers that actually convert Stimulation into inherited traits. Its appetite for Stimulation is now zero, so it no longer bids for a room it cannot use.",
+            "Disorders are not visual birth defects, whatever the wiki's naming suggests: OCD and Anemia are list traits like passives, while Lobster Claw and Cleft Pallet occupy a body-part slot. On a real save the two lists share not one name \u2014 only the disorder half was wrong here.",
         ]
 
         root = QVBoxLayout(self)
