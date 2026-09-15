@@ -713,6 +713,20 @@ def _select_room_pairs(
     return selected_pairs
 
 
+def _sa_mode_key(mode_key: str, stimulation: float) -> str:
+    """Identity the SA pass uses to look up a pair's score in a room.
+
+    The SA chain indexes pair scores by room *mode*, but a pair's quality
+    also depends on the room's Stimulation — that is the whole mechanism
+    behind sending desired passives to the loudest room. Keying on the mode
+    alone collapsed every room sharing a tree into one entry (a three-room
+    house folded Stimulation 0, 50 and 95 into whichever was cached last), so
+    More Depth could not tell a loud Best Pairs room from a quiet one and
+    happily undid the first pass's Stimulation ordering.
+    """
+    return f"{mode_key}@{float(stimulation):g}"
+
+
 def _run_sa_refinement(
     *,
     room_assignments: dict[str, list[Cat]],
@@ -752,7 +766,8 @@ def _run_sa_refinement(
     pair_factor_cache = getattr(score_pair_cached, "_pair_factor_cache", {})
     sa_pair_scores: dict[tuple[int, int, str], tuple[bool, float, float]] = {}
     for (ak, bk, _stim, room_mode), factors in pair_factor_cache.items():
-        pk = (ak, bk, room_mode) if ak < bk else (bk, ak, room_mode)
+        mode = _sa_mode_key(room_mode, _stim)
+        pk = (ak, bk, mode) if ak < bk else (bk, ak, mode)
         sa_pair_scores[pk] = (factors.compatible, factors.risk, factors.quality)
 
     sa_state: dict[int, str] = {}
@@ -785,7 +800,7 @@ def _run_sa_refinement(
         all_room_keys=[r.key for r in room_configs],
         room_max_cats={r.key: r.max_cats for r in room_configs},
         room_stim={r.key: r.base_stim for r in room_configs},
-        room_modes={r.key: r.mode_key for r in room_configs},
+        room_modes={r.key: _sa_mode_key(r.mode_key, r.base_stim) for r in room_configs},
         fixed_ids=sa_ey_fixed,
         immovable_ids=sa_immovable,
         hater_key_map=sa_haters,
@@ -1171,7 +1186,18 @@ def optimize_room_distribution(
             if params.avoid_lovers and (cat_a.db_key in lover_locked or cat_b.db_key in lover_locked):
                 if not is_mutual_lover_pair(cat_a, cat_b, lover_key_map):
                     continue
-            factors = _score_pair_cached(cat_a, cat_b, best_ey_room or _best_breeding_room(room_configs) or room_configs[0], params.stimulation)
+            # Rank the pair at the best room it could actually be given, not
+            # at a fixed global Stimulation. The room's own mode was already
+            # being used here while the Stimulation came from params, which
+            # understated exactly the pairs this ordering exists to promote:
+            # at Stimulation 50 a desired passive is only 55% likely, so a
+            # passive-carrier scored below an active-carrier (already
+            # guaranteed at 32) and lost the loud room to it.
+            _rank_room = best_ey_room or _best_breeding_room(room_configs) or room_configs[0]
+            factors = _score_pair_cached(
+                cat_a, cat_b, _rank_room,
+                _rank_room.base_stim if _rank_room.room_type.uses_profile else params.stimulation,
+            )
             if not factors.compatible or factors.risk > params.max_risk:
                 continue
             pairs_with_scores.append(
@@ -1189,17 +1215,20 @@ def optimize_room_distribution(
                 }
             )
 
-        # Pairs that can still convert Stimulation into an inherited trait go
-        # first, so they reach the loud rooms before the pairs that gain
-        # nothing from them. A desired passive needs 95 Stimulation to be
-        # certain and an active only 32, so this naturally orders
-        # passive-carriers ahead of active-carriers ahead of everyone else.
+        # Quality stays ahead of Stimulation appetite. Quality already carries
+        # the inbreeding discount (and the Stimulation-scaled trait bonus), so
+        # ranking appetite above it let any trait-carrier jump ahead of any
+        # non-carrier however inbred it was — a 40%-risk sibling pair carrying
+        # a lightly-weighted trait outranked an unrelated 2%-risk pair.
+        # Appetite only breaks ties now; which room a pair actually gets is
+        # decided per-pair in the placement loop below, which is where the
+        # Stimulation ordering really comes from.
         pairs_with_scores.sort(
             key=lambda p: (
                 p["must_breed_bonus"],
                 p["lover_bonus"],
-                p["stim_need"],
                 p["quality"],
+                p["stim_need"],
             ),
             reverse=True,
         )

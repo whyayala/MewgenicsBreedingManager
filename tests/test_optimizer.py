@@ -1410,3 +1410,153 @@ def test_trait_inheritance_chance_matches_the_wiki_thresholds():
     # certain, however loud the room.
     assert trait_inheritance_chance("mutation", 0.0) == pytest.approx(0.5)
     assert trait_inheritance_chance("mutation", 1000.0) < 1.0
+
+
+def test_more_depth_sees_room_stimulation():
+    """The SA pass looks pair scores up by room *mode*. Keying on the mode
+    alone collapsed every room sharing a tree into one entry, so More Depth
+    could not tell a loud Best Pairs room from a quiet one and undid the
+    first pass's Stimulation ordering."""
+    from room_optimizer.optimizer import _sa_mode_key
+
+    assert _sa_mode_key("best_pairs", 0.0) != _sa_mode_key("best_pairs", 95.0)
+    assert _sa_mode_key("best_pairs", 95.0) != _sa_mode_key("melee", 95.0)
+    assert _sa_mode_key("best_pairs", 95.0) == _sa_mode_key("best_pairs", 95.0)
+
+
+def test_more_depth_moves_a_passive_pair_into_the_loud_room():
+    """Seeded with the wrong layout, More Depth must recognise that the
+    passive-carrying pair belongs in the high-Stimulation room."""
+    import room_optimizer.optimizer as impl
+    import breeding
+
+    carrier_m = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5)
+    carrier_m.passive_abilities = ["Library"]
+    carrier_f = _make_cat(2, gender="female", sexuality="bi", stat_seed=7, age=5)
+    carrier_f.passive_abilities = ["Library"]
+    plain_m = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5)
+    plain_f = _make_cat(4, gender="female", sexuality="bi", stat_seed=7, age=5)
+    cats = [carrier_m, carrier_f, plain_m, plain_f]
+
+    rooms = [
+        RoomConfig("Quiet", RoomType.BEST_PAIRS, 2, 0.0, comfort=24.0),
+        RoomConfig("Loud", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+    profiles = {"best_pairs": {
+        "traits": [{"category": "passive", "key": "library", "weight": 10,
+                    "display": "Library"}],
+        "stat_priority": []}}
+    params = OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=True,
+                                sa_chains=1, sa_neighbors_per_temp=400,
+                                mode_profiles=profiles)
+
+    cache: dict = {}
+
+    def scorer(a, b, room, stimulation):
+        key = (min(a.db_key, b.db_key), max(a.db_key, b.db_key),
+               float(stimulation), room.mode_key)
+        if key not in cache:
+            profile = impl._profile_for_room(params, room)
+            cache[key] = breeding.score_pair(
+                a, b, hater_key_map={}, lover_key_map={}, avoid_lovers=False,
+                stimulation=stimulation, planner_traits=profile.get("traits", []),
+                stat_priority=[])
+        scorer._pair_factor_cache = cache
+        return cache[key]
+
+    # Deliberately wrong seed: the carriers are in the quiet room.
+    refined = impl._run_sa_refinement(
+        room_assignments={"Quiet": [carrier_m, carrier_f],
+                          "Loud": [plain_m, plain_f], "Attic": []},
+        room_configs=rooms, cats_by_id={c.db_key: c for c in cats},
+        filtered_cats=cats, params=params, mode_family=False, family_group_ids={},
+        hater_key_map={c.db_key: set() for c in cats},
+        lover_key_map={c.db_key: set() for c in cats},
+        best_ey_room=None, original_state={c.db_key: "" for c in cats},
+        score_pair_cached=scorer,
+    )
+
+    loud = {c.db_key for c in refined["Loud"]}
+    assert loud == {1, 2}, f"More Depth left the passive pair out of the loud room: {refined}"
+
+
+def test_trait_appetite_does_not_outrank_the_inbreeding_discount():
+    """Stimulation appetite must break ties, not lead. Quality already carries
+    the inbreeding discount, so ranking appetite above it let any
+    trait-carrier jump ahead of any non-carrier however inbred it was."""
+    import breeding
+
+    traits = [{"category": "passive", "key": "library", "weight": 1,
+               "display": "Library"}]
+
+    gp_m = _make_cat(90, gender="male", stat_seed=7)
+    gp_f = _make_cat(91, gender="female", stat_seed=7)
+
+    clean_m = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5)
+    clean_f = _make_cat(2, gender="female", sexuality="bi", stat_seed=7, age=5)
+
+    sib_m = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5,
+                      parent_a=gp_m, parent_b=gp_f, generation=1)
+    sib_m.passive_abilities = ["Library"]
+    sib_f = _make_cat(4, gender="female", sexuality="bi", stat_seed=7, age=5,
+                      parent_a=gp_m, parent_b=gp_f, generation=1)
+
+    def factors(a, b):
+        return breeding.score_pair(
+            a, b, hater_key_map={}, lover_key_map={}, avoid_lovers=False,
+            stimulation=50.0, planner_traits=traits)
+
+    clean = factors(clean_m, clean_f)
+    inbred = factors(sib_m, sib_f)
+
+    # The premise: siblings are much riskier, and the light trait bonus does
+    # not make up for it in the score.
+    assert inbred.risk > clean.risk
+    assert clean.quality > inbred.quality
+
+    need_clean = breeding.desired_trait_stim_need(clean_m, clean_f, traits)
+    need_inbred = breeding.desired_trait_stim_need(sib_m, sib_f, traits)
+    assert need_inbred > need_clean  # only the sibling pair carries the trait
+
+    # The optimizer's ordering must still put the cleaner pair first.
+    order = sorted(
+        [("clean", 0.0, 0.0, clean.quality, need_clean),
+         ("inbred", 0.0, 0.0, inbred.quality, need_inbred)],
+        key=lambda p: (p[1], p[2], p[3], p[4]), reverse=True,
+    )
+    assert order[0][0] == "clean"
+
+
+def test_max_risk_still_excludes_inbred_pairs():
+    """The hard inbreeding gate is unchanged by any of the Stimulation work."""
+    gp_m = _make_cat(90, gender="male", stat_seed=7)
+    gp_f = _make_cat(91, gender="female", stat_seed=7)
+    sib_m = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5,
+                      parent_a=gp_m, parent_b=gp_f, generation=1)
+    sib_m.passive_abilities = ["Library"]
+    sib_f = _make_cat(2, gender="female", sexuality="bi", stat_seed=7, age=5,
+                      parent_a=gp_m, parent_b=gp_f, generation=1)
+
+    rooms = [
+        RoomConfig("Loud", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+    profiles = {"best_pairs": {
+        "traits": [{"category": "passive", "key": "library", "weight": 10,
+                    "display": "Library"}],
+        "stat_priority": []}}
+
+    result = optimize_room_distribution(
+        [sib_m, sib_f], rooms,
+        OptimizationParams(max_risk=10.0, avoid_lovers=False, use_sa=False,
+                           mode_profiles=profiles),
+        cache=None, excluded_keys=set(),
+    )
+
+    # A desired passive must not buy a sibling pair past the risk cap.
+    paired = {
+        tuple(sorted((p.cat_a.db_key, p.cat_b.db_key)))
+        for a in result.rooms for p in a.pairs
+    }
+    assert (1, 2) not in paired
