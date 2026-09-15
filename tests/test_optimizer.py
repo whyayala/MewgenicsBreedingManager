@@ -1,5 +1,7 @@
 import os
 import sys
+
+import pytest
 from types import SimpleNamespace
 
 _proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1200,3 +1202,419 @@ def test_more_depth_respects_capacity_with_pinned_cats():
         cap = assignment.room.max_cats
         if cap is not None:
             assert len(assignment.cats) <= cap, (assignment.room.key, len(assignment.cats))
+
+
+def _spacious_rooms(count: int = 4, *, capacity: int = 20, comfort: float = 24.0):
+    """Breeding rooms with far more capacity between them than any test uses."""
+    keys = ["Floor1_Large", "Floor1_Small", "Floor2_Small", "Floor2_Large"][:count]
+    return [
+        RoomConfig(key, RoomType.BEST_PAIRS, capacity, 20.0 + idx, comfort=comfort)
+        for idx, key in enumerate(keys)
+    ] + [RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=comfort)]
+
+
+def test_spare_capacity_does_not_leave_breeding_rooms_empty():
+    """Rooms used to be filled to capacity one at a time, so whenever the
+    house had more room than cats the rooms at the tail of the fill order got
+    nothing at all. Reported as "2nd floor left is empty after I cut down to
+    60 cats"."""
+    cats = [
+        _make_cat(i, gender="male" if i % 2 else "female", stat_seed=6)
+        for i in range(1, 25)
+    ]
+    rooms = _spacious_rooms()
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+
+    occupancy = {
+        a.room.key: len(a.cats) for a in result.rooms if a.room.room_type.uses_profile
+    }
+    assert all(occupancy.values()), f"a breeding room was left empty: {occupancy}"
+    # 24 cats over 4 rooms: an even spread is 6 apiece. Allow slack for pair
+    # placement, but nothing like the old 20/4/0/0.
+    assert max(occupancy.values()) - min(occupancy.values()) <= 4, occupancy
+
+
+def test_spare_capacity_spread_survives_more_depth():
+    """The SA pass scores a crowding penalty, so it has no reason to undo the
+    spread the greedy pass produced."""
+    cats = [
+        _make_cat(i, gender="male" if i % 2 else "female", stat_seed=6)
+        for i in range(1, 25)
+    ]
+    rooms = _spacious_rooms()
+    result = optimize_room_distribution(
+        cats, rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=True,
+                           sa_chains=1),
+        cache=None, excluded_keys=set(),
+    )
+
+    occupancy = {
+        a.room.key: len(a.cats) for a in result.rooms if a.room.room_type.uses_profile
+    }
+    assert all(occupancy.values()), f"More Depth emptied a breeding room: {occupancy}"
+
+
+def test_balanced_order_keeps_quiet_rooms_first_until_they_fill():
+    """Balancing must not cost kittens and parked cats their quiet-room
+    preference: rooms tie while they are all inside the free four, and the
+    tie breaks on stimulation exactly as before."""
+    loud = RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 20, 90.0, comfort=24.0)
+    quiet = RoomConfig("Floor2_Large", RoomType.BEST_PAIRS, 20, 5.0, comfort=24.0)
+
+    empty = {loud.key: 0, quiet.key: 0}
+    assert [r.key for r in room_optimizer_impl.balanced_room_order([loud, quiet], empty)] == [
+        quiet.key, loud.key
+    ]
+
+    # Once the quiet room has used its free four, the loud one is cheaper.
+    filled = {loud.key: 0, quiet.key: room_optimizer_impl.COMFORT_FREE_CATS}
+    assert [r.key for r in room_optimizer_impl.balanced_room_order([loud, quiet], filled)] == [
+        loud.key, quiet.key
+    ]
+
+
+def test_crowding_after_counts_only_cats_past_the_free_four():
+    crowding_after = room_optimizer_impl.crowding_after
+    free = room_optimizer_impl.COMFORT_FREE_CATS
+    assert crowding_after(0) == 0
+    assert crowding_after(free - 1) == 0
+    assert crowding_after(free) == 1
+    assert crowding_after(free + 5) == 6
+    # Placing a pair costs both of its cats.
+    assert crowding_after(free, added=2) == 2
+
+
+def _stim_tiered_rooms():
+    """Three breeding rooms that differ only in Stimulation, plus a fallback.
+
+    Two slots each, so exactly one pair fits per room and the room a pair
+    lands in is the room it was actually given priority for.
+    """
+    return [
+        RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 2, 5.0, comfort=24.0),
+        RoomConfig("Floor1_Small", RoomType.BEST_PAIRS, 2, 40.0, comfort=24.0),
+        RoomConfig("Floor2_Large", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+
+
+def _trait_carrier_pairs():
+    """Six cats: one carrier of each desired category, plus a plain mate each.
+
+    The optimizer re-pairs freely, so the assertions key on where each
+    *carrier* lands rather than on which mate it ends up with.
+    """
+    passive_carrier = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5)
+    passive_carrier.passive_abilities = ["Library"]
+    active_carrier = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5)
+    active_carrier.abilities = ["Fireball"]
+    mutation_carrier = _make_cat(5, gender="male", sexuality="bi", stat_seed=7, age=5,
+                                 mutations=["Spotted"])
+
+    mates = [
+        _make_cat(k, gender="female", sexuality="bi", stat_seed=7, age=5)
+        for k in (2, 4, 6)
+    ]
+
+    profiles = {
+        "best_pairs": {
+            "traits": [
+                {"category": "passive", "key": "library", "weight": 10, "display": "Library"},
+                {"category": "ability", "key": "fireball", "weight": 10, "display": "Fireball"},
+                {"category": "mutation", "key": "spotted", "weight": 10, "display": "Spotted"},
+            ],
+            "stat_priority": [],
+        },
+    }
+    return [passive_carrier, active_carrier, mutation_carrier, *mates], profiles
+
+
+def test_desired_passives_get_the_loudest_room_then_actives():
+    """Wiki: a passive is certain only at 95 Stimulation, an active already at
+    32, and a mutation never. So the loudest room is worth most to the pair
+    carrying a desired passive, next to the active-carriers, and least to the
+    mutation-carriers — which is the order rooms are handed out in."""
+    cats, profiles = _trait_carrier_pairs()
+    result = optimize_room_distribution(
+        cats, _stim_tiered_rooms(),
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False,
+                           mode_profiles=profiles),
+        cache=None, excluded_keys=set(),
+    )
+
+    stim_by_room = {a.room.key: a.room.base_stim for a in result.rooms}
+    passive_stim = stim_by_room[_room_for_cat(result, 1)]
+    active_stim = stim_by_room[_room_for_cat(result, 3)]
+    mutation_stim = stim_by_room[_room_for_cat(result, 5)]
+
+    assert passive_stim == 95.0, f"passive carrier landed at {passive_stim} Stim"
+    assert passive_stim > active_stim > mutation_stim, (
+        passive_stim, active_stim, mutation_stim
+    )
+
+
+def test_active_carrier_takes_the_loud_room_when_it_is_that_or_nothing():
+    """With no room at the active's 32-Stimulation guarantee, the
+    active-carrier must still outrank a mutation-carrier for the loud one."""
+    rooms = [
+        RoomConfig("Floor1_Large", RoomType.BEST_PAIRS, 2, 5.0, comfort=24.0),
+        RoomConfig("Floor2_Large", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+    active_carrier = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5)
+    active_carrier.abilities = ["Fireball"]
+    mutation_carrier = _make_cat(5, gender="male", sexuality="bi", stat_seed=7, age=5,
+                                 mutations=["Spotted"])
+    mates = [
+        _make_cat(k, gender="female", sexuality="bi", stat_seed=7, age=5) for k in (4, 6)
+    ]
+    profiles = {
+        "best_pairs": {
+            "traits": [
+                {"category": "ability", "key": "fireball", "weight": 10, "display": "Fireball"},
+                {"category": "mutation", "key": "spotted", "weight": 10, "display": "Spotted"},
+            ],
+            "stat_priority": [],
+        },
+    }
+
+    result = optimize_room_distribution(
+        [active_carrier, mutation_carrier, *mates], rooms,
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False,
+                           mode_profiles=profiles),
+        cache=None, excluded_keys=set(),
+    )
+    assert _room_for_cat(result, 3) == "Floor2_Large"
+    assert _room_for_cat(result, 5) == "Floor1_Large"
+
+
+def test_trait_inheritance_chance_matches_the_wiki_thresholds():
+    from breeding import trait_inheritance_chance
+
+    # Passive: 5% + 1% x Stim, certain at 95.
+    assert trait_inheritance_chance("passive", 0.0) == pytest.approx(0.05)
+    assert trait_inheritance_chance("passive", 95.0) == pytest.approx(1.0)
+    assert trait_inheritance_chance("passive", 94.0) < 1.0
+
+    # Active: 20% + 2.5% x Stim, certain at 32.
+    assert trait_inheritance_chance("ability", 0.0) == pytest.approx(0.20)
+    assert trait_inheritance_chance("ability", 32.0) == pytest.approx(1.0)
+    assert trait_inheritance_chance("ability", 31.0) < 1.0
+
+    # Mutation: an even roll at 0 Stimulation, asymptotic after — never
+    # certain, however loud the room.
+    assert trait_inheritance_chance("mutation", 0.0) == pytest.approx(0.5)
+    assert trait_inheritance_chance("mutation", 1000.0) < 1.0
+
+
+def test_more_depth_sees_room_stimulation():
+    """The SA pass looks pair scores up by room *mode*. Keying on the mode
+    alone collapsed every room sharing a tree into one entry, so More Depth
+    could not tell a loud Best Pairs room from a quiet one and undid the
+    first pass's Stimulation ordering."""
+    from room_optimizer.optimizer import _sa_mode_key
+
+    assert _sa_mode_key("best_pairs", 0.0) != _sa_mode_key("best_pairs", 95.0)
+    assert _sa_mode_key("best_pairs", 95.0) != _sa_mode_key("melee", 95.0)
+    assert _sa_mode_key("best_pairs", 95.0) == _sa_mode_key("best_pairs", 95.0)
+
+
+def test_more_depth_moves_a_passive_pair_into_the_loud_room():
+    """Seeded with the wrong layout, More Depth must recognise that the
+    passive-carrying pair belongs in the high-Stimulation room."""
+    import room_optimizer.optimizer as impl
+    import breeding
+
+    carrier_m = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5)
+    carrier_m.passive_abilities = ["Library"]
+    carrier_f = _make_cat(2, gender="female", sexuality="bi", stat_seed=7, age=5)
+    carrier_f.passive_abilities = ["Library"]
+    plain_m = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5)
+    plain_f = _make_cat(4, gender="female", sexuality="bi", stat_seed=7, age=5)
+    cats = [carrier_m, carrier_f, plain_m, plain_f]
+
+    rooms = [
+        RoomConfig("Quiet", RoomType.BEST_PAIRS, 2, 0.0, comfort=24.0),
+        RoomConfig("Loud", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+    profiles = {"best_pairs": {
+        "traits": [{"category": "passive", "key": "library", "weight": 10,
+                    "display": "Library"}],
+        "stat_priority": []}}
+    params = OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=True,
+                                sa_chains=1, sa_neighbors_per_temp=400,
+                                mode_profiles=profiles)
+
+    cache: dict = {}
+
+    def scorer(a, b, room, stimulation):
+        key = (min(a.db_key, b.db_key), max(a.db_key, b.db_key),
+               float(stimulation), room.mode_key)
+        if key not in cache:
+            profile = impl._profile_for_room(params, room)
+            cache[key] = breeding.score_pair(
+                a, b, hater_key_map={}, lover_key_map={}, avoid_lovers=False,
+                stimulation=stimulation, planner_traits=profile.get("traits", []),
+                stat_priority=[])
+        scorer._pair_factor_cache = cache
+        return cache[key]
+
+    # Deliberately wrong seed: the carriers are in the quiet room.
+    refined = impl._run_sa_refinement(
+        room_assignments={"Quiet": [carrier_m, carrier_f],
+                          "Loud": [plain_m, plain_f], "Attic": []},
+        room_configs=rooms, cats_by_id={c.db_key: c for c in cats},
+        filtered_cats=cats, params=params, mode_family=False, family_group_ids={},
+        hater_key_map={c.db_key: set() for c in cats},
+        lover_key_map={c.db_key: set() for c in cats},
+        best_ey_room=None, original_state={c.db_key: "" for c in cats},
+        score_pair_cached=scorer,
+    )
+
+    loud = {c.db_key for c in refined["Loud"]}
+    assert loud == {1, 2}, f"More Depth left the passive pair out of the loud room: {refined}"
+
+
+def test_trait_appetite_does_not_outrank_the_inbreeding_discount():
+    """Stimulation appetite must break ties, not lead. Quality already carries
+    the inbreeding discount, so ranking appetite above it let any
+    trait-carrier jump ahead of any non-carrier however inbred it was."""
+    import breeding
+
+    traits = [{"category": "passive", "key": "library", "weight": 1,
+               "display": "Library"}]
+
+    gp_m = _make_cat(90, gender="male", stat_seed=7)
+    gp_f = _make_cat(91, gender="female", stat_seed=7)
+
+    clean_m = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5)
+    clean_f = _make_cat(2, gender="female", sexuality="bi", stat_seed=7, age=5)
+
+    sib_m = _make_cat(3, gender="male", sexuality="bi", stat_seed=7, age=5,
+                      parent_a=gp_m, parent_b=gp_f, generation=1)
+    sib_m.passive_abilities = ["Library"]
+    sib_f = _make_cat(4, gender="female", sexuality="bi", stat_seed=7, age=5,
+                      parent_a=gp_m, parent_b=gp_f, generation=1)
+
+    def factors(a, b):
+        return breeding.score_pair(
+            a, b, hater_key_map={}, lover_key_map={}, avoid_lovers=False,
+            stimulation=50.0, planner_traits=traits)
+
+    clean = factors(clean_m, clean_f)
+    inbred = factors(sib_m, sib_f)
+
+    # The premise: siblings are much riskier, and the light trait bonus does
+    # not make up for it in the score.
+    assert inbred.risk > clean.risk
+    assert clean.quality > inbred.quality
+
+    need_clean = breeding.desired_trait_stim_need(clean_m, clean_f, traits)
+    need_inbred = breeding.desired_trait_stim_need(sib_m, sib_f, traits)
+    assert need_inbred > need_clean  # only the sibling pair carries the trait
+
+    # The optimizer's ordering must still put the cleaner pair first.
+    order = sorted(
+        [("clean", 0.0, 0.0, clean.quality, need_clean),
+         ("inbred", 0.0, 0.0, inbred.quality, need_inbred)],
+        key=lambda p: (p[1], p[2], p[3], p[4]), reverse=True,
+    )
+    assert order[0][0] == "clean"
+
+
+def test_max_risk_still_excludes_inbred_pairs():
+    """The hard inbreeding gate is unchanged by any of the Stimulation work."""
+    gp_m = _make_cat(90, gender="male", stat_seed=7)
+    gp_f = _make_cat(91, gender="female", stat_seed=7)
+    sib_m = _make_cat(1, gender="male", sexuality="bi", stat_seed=7, age=5,
+                      parent_a=gp_m, parent_b=gp_f, generation=1)
+    sib_m.passive_abilities = ["Library"]
+    sib_f = _make_cat(2, gender="female", sexuality="bi", stat_seed=7, age=5,
+                      parent_a=gp_m, parent_b=gp_f, generation=1)
+
+    rooms = [
+        RoomConfig("Loud", RoomType.BEST_PAIRS, 2, 95.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 50.0, comfort=24.0),
+    ]
+    profiles = {"best_pairs": {
+        "traits": [{"category": "passive", "key": "library", "weight": 10,
+                    "display": "Library"}],
+        "stat_priority": []}}
+
+    result = optimize_room_distribution(
+        [sib_m, sib_f], rooms,
+        OptimizationParams(max_risk=10.0, avoid_lovers=False, use_sa=False,
+                           mode_profiles=profiles),
+        cache=None, excluded_keys=set(),
+    )
+
+    # A desired passive must not buy a sibling pair past the risk cap.
+    paired = {
+        tuple(sorted((p.cat_a.db_key, p.cat_b.db_key)))
+        for a in result.rooms for p in a.pairs
+    }
+    assert (1, 2) not in paired
+
+
+def test_more_depth_never_lands_below_its_own_greedy_seed():
+    """More Depth starts from the greedy placement, so it must never return a
+    worse layout than the one it was handed.
+
+    Its per-room term used to be ``sum_q / total_possible`` — average quality
+    per *possible* pairing, which falls as a room fills whether or not the
+    extra cats pair up. SA was optimising something the app never reports and
+    routinely finished below its own seed: on a 93-cat save, 11 pairs at
+    562.0 total quality against the seed's 13 at 584.9.
+    """
+    cats = [
+        _make_cat(i, gender="male" if i % 2 else "female", stat_seed=6, age=5)
+        for i in range(1, 21)
+    ]
+    rooms = _spacious_rooms()
+
+    def run(use_sa):
+        result = optimize_room_distribution(
+            cats, rooms,
+            OptimizationParams(max_risk=100.0, avoid_lovers=False,
+                               use_sa=use_sa, sa_chains=1),
+            cache=None, excluded_keys=set(),
+        )
+        pairs = [p for a in result.rooms for p in a.pairs]
+        return len(pairs), sum(p.quality for p in pairs)
+
+    seed_pairs, seed_quality = run(False)
+    sa_pairs, sa_quality = run(True)
+
+    assert seed_pairs > 0, "the greedy seed found no pairs, so this proves nothing"
+    assert sa_pairs >= seed_pairs, (
+        f"More Depth lost pairs: {sa_pairs} vs the seed's {seed_pairs}"
+    )
+
+
+def test_sa_objective_ranks_whole_pairs_ahead_of_average_quality():
+    """The SA score must count pairs first, matching the greedy DP's
+    (count, quality, -risk) ordering — not normalise quality by how many
+    pairings a room could theoretically hold."""
+    import inspect
+    import room_optimizer.parallel as par
+
+    body = inspect.getsource(par._sa_chain)
+    scoring = body[body.index("def _state_score"):body.index("def _neighbor")]
+    # Throughput mode keeps its own normalised term, so look only at the
+    # default branch — and at code, not the comment explaining the old form.
+    default_branch = scoring[scoring.index("                else:"):]
+    code = "\n".join(
+        line for line in default_branch.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "sum_q / total_possible" not in code, (
+        "SA is normalising quality by possible pairings again"
+    )
+    assert "valid_pairs * 1000.0" in code
+    assert "total_quality += sum_q" in code

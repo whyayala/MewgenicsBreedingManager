@@ -783,26 +783,54 @@ def _trait_inheritance_probabilities(
     for key, (prob, detail) in seen_p.items():
         results.append((_mutation_display_name(key), "passive", prob, detail))
 
-    # Visual mutations
-    mutation_base = 0.80
+    # Visual mutations. Each body part resolves to exactly one mutation, so
+    # the odds depend on what the *other* parent has on that same part:
+    #   both parents, same mutation  -> certain, whichever parent wins
+    #   one parent, other part plain -> the Stimulation-biased part roll
+    #   both parents, different ones -> a coin flip between the two, and no
+    #                                   amount of Stimulation changes it
+    # The old flat 80% modelled none of this and overstated a lone carrier.
     a_mutations = list(a.mutations or [])
     b_mutations = list(b.mutations or [])
     seen_m: dict[str, tuple[float, str]] = {}
     b_mkeys = {x.lower() for x in b_mutations}
 
+    def _slot_keys(cat, name: str) -> set:
+        return {
+            entry.get("slot_key")
+            for entry in (getattr(cat, "visual_mutation_entries", None) or [])
+            if not entry.get("is_defect")
+            and str(entry.get("name", "")).strip().lower() == name
+        }
+
+    def _contested(carrier, mate, name: str) -> bool:
+        """Does *mate* hold a different mutation on the carrier's part?"""
+        slots = _slot_keys(carrier, name)
+        if not slots:
+            return False
+        return any(
+            entry.get("slot_key") in slots
+            and str(entry.get("name", "")).strip().lower() != name
+            for entry in (getattr(mate, "visual_mutation_entries", None) or [])
+        )
+
     for mut in a_mutations:
         key = mut.lower()
         if key in b_mkeys:
-            seen_m[key] = (mutation_base, f"Both parents ({mutation_base * 100:.0f}%)")
+            seen_m[key] = (1.0, "Both parents (100%)")
+        elif _contested(a, b, key):
+            seen_m[key] = (0.5, f"From {a.name}, contested by {b.name}'s mutation on the same part (50%)")
         else:
-            prob = mutation_base * favor_weight
-            seen_m[key] = (prob, f"From {a.name} ({prob * 100:.0f}%)")
+            seen_m[key] = (favor_weight, f"From {a.name} ({favor_weight * 100:.0f}%)")
 
     for mut in b_mutations:
         key = mut.lower()
         if key not in seen_m:
-            prob = mutation_base * (1.0 - favor_weight)
-            seen_m[key] = (prob, f"From {b.name} ({prob * 100:.0f}%)")
+            if _contested(b, a, key):
+                seen_m[key] = (0.5, f"From {b.name}, contested by {a.name}'s mutation on the same part (50%)")
+            else:
+                prob = 1.0 - favor_weight
+                seen_m[key] = (prob, f"From {b.name} ({prob * 100:.0f}%)")
 
     for key, (prob, detail) in seen_m.items():
         results.append((_mutation_display_name(key), "mutation", prob, detail))

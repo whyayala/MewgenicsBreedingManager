@@ -7,7 +7,13 @@ from dataclasses import replace
 from functools import lru_cache
 from typing import Iterable
 
-from breeding import PairFactors, is_hater_conflict, is_mutual_lover_pair, score_pair as score_pair_factors
+from breeding import (
+    PairFactors,
+    desired_trait_stim_need,
+    is_hater_conflict,
+    is_mutual_lover_pair,
+    score_pair as score_pair_factors,
+)
 from save_parser import Cat, FurnitureRoomSummary, ROOM_DISPLAY, STAT_NAMES
 from mewgenics.utils.planner_state import _normalize_mutation_mode_profiles
 
@@ -151,18 +157,19 @@ def _place_in_first_fitting_room(
     *,
     offset: int = 0,
 ) -> bool:
-    """Place *cat* in the first room from *rooms* that has capacity.
+    """Place *cat* in whichever of *rooms* keeps its Comfort highest.
 
-    Rooms are tried starting at ``offset`` so successive cats spread across
-    equally-suitable rooms instead of packing the first one. Returns False
-    when no room has room left, leaving the cat unassigned rather than
+    Rooms are tried in ``balanced_room_order`` so successive cats spread
+    across equally-suitable rooms instead of packing the first one. Returns
+    False when no room has room left, leaving the cat unassigned rather than
     overfilling — the caller reports those as excluded.
+
+    *offset* is accepted for backwards compatibility and ignored: the balance
+    ordering already spreads cats, and rotating it would undo that.
     """
     if not rooms:
         return False
-    count = len(rooms)
-    for step in range(count):
-        room = rooms[(offset + step) % count]
+    for room in balanced_room_order(rooms, room_effective_counts):
         if _can_fit_single(room, room_effective_counts.get(room.key, 0), cat):
             room_assignments[room.key].append(cat)
             room_effective_counts[room.key] = room_effective_counts.get(room.key, 0) + 1
@@ -303,6 +310,54 @@ def comfort_capped_occupancy(comfort: float, comfort_target: float) -> int:
     return max(COMFORT_FREE_CATS, allowed)
 
 
+def crowding_after(occupancy: int, added: int = 1) -> int:
+    """Comfort a room has given up to crowding once *added* more cats are in.
+
+    Comfort drops 1 per cat beyond the first ``COMFORT_FREE_CATS``, so this
+    is ``0`` while the room is still within its free four and grows by one
+    per cat after that.
+
+    Ranking rooms by this rather than by their resulting Comfort is what
+    keeps a poorly furnished room in the running: a cat placed there costs
+    nothing while the room is under four, so the room takes its share instead
+    of being skipped forever for having less Comfort to begin with. And
+    because it keeps growing with occupancy -- rather than flattening out at
+    one point per cat -- a room that is already full sorts behind an emptier
+    one, which is what actually spreads cats around.
+    """
+    return max(0, occupancy + added - COMFORT_FREE_CATS)
+
+
+def balanced_room_order(
+    rooms: list[RoomConfig],
+    room_effective_counts: dict[str, int],
+) -> list[RoomConfig]:
+    """Order *rooms* cheapest-first by the Comfort one more cat would cost.
+
+    Placement used to walk a fixed order and fill each room to its cap before
+    touching the next, which leaves the rooms at the tail of that order empty
+    whenever the house has spare capacity -- the cats run out first. That is
+    strictly worse than spreading them: the first four cats in a room cost no
+    Comfort at all, so an even house keeps every room further from the fight
+    threshold than a packed one does.
+
+    Rooms tie while they are all still under ``COMFORT_FREE_CATS``, and the
+    tie breaks on stimulation, so kittens and parked unpaired cats keep their
+    preference for the quietest room -- they just stop piling into it past
+    the free four. ``uses_profile`` breaks the remaining ties toward fallback
+    rooms, matching the old nursery order.
+    """
+    return sorted(
+        rooms,
+        key=lambda room: (
+            crowding_after(room_effective_counts.get(room.key, 0)),
+            float(room.base_stim or 0.0),
+            room.room_type.uses_profile,
+            room.key,
+        ),
+    )
+
+
 def apply_comfort_target(
     room_configs: list[RoomConfig],
     comfort_target: float,
@@ -407,6 +462,25 @@ def build_room_configs(
 def _normalized_mode_profiles(params: OptimizationParams) -> dict[str, dict]:
     profiles = _normalize_mutation_mode_profiles(getattr(params, "mode_profiles", {}) or {}, legacy_traits=getattr(params, "planner_traits", []))
     return profiles
+
+
+def _all_profile_traits(params: OptimizationParams) -> list[dict]:
+    """Every desired trait across all room profiles, de-duplicated.
+
+    Pairs are ranked for Stimulation appetite before a room is picked for
+    them, so there is no single profile to consult yet — a pair carrying a
+    desired passive should reach a loud room whichever tree wants it.
+    """
+    seen: set[tuple[str, str]] = set()
+    traits: list[dict] = []
+    for profile in _normalized_mode_profiles(params).values():
+        for trait in profile.get("traits", []) or ():
+            ident = (str(trait.get("category", "")), str(trait.get("key", "")))
+            if ident in seen or not ident[1]:
+                continue
+            seen.add(ident)
+            traits.append(trait)
+    return traits
 
 
 def _profile_for_room(params: OptimizationParams, room: RoomConfig) -> dict:
@@ -639,6 +713,20 @@ def _select_room_pairs(
     return selected_pairs
 
 
+def _sa_mode_key(mode_key: str, stimulation: float) -> str:
+    """Identity the SA pass uses to look up a pair's score in a room.
+
+    The SA chain indexes pair scores by room *mode*, but a pair's quality
+    also depends on the room's Stimulation — that is the whole mechanism
+    behind sending desired passives to the loudest room. Keying on the mode
+    alone collapsed every room sharing a tree into one entry (a three-room
+    house folded Stimulation 0, 50 and 95 into whichever was cached last), so
+    More Depth could not tell a loud Best Pairs room from a quiet one and
+    happily undid the first pass's Stimulation ordering.
+    """
+    return f"{mode_key}@{float(stimulation):g}"
+
+
 def _run_sa_refinement(
     *,
     room_assignments: dict[str, list[Cat]],
@@ -678,7 +766,8 @@ def _run_sa_refinement(
     pair_factor_cache = getattr(score_pair_cached, "_pair_factor_cache", {})
     sa_pair_scores: dict[tuple[int, int, str], tuple[bool, float, float]] = {}
     for (ak, bk, _stim, room_mode), factors in pair_factor_cache.items():
-        pk = (ak, bk, room_mode) if ak < bk else (bk, ak, room_mode)
+        mode = _sa_mode_key(room_mode, _stim)
+        pk = (ak, bk, mode) if ak < bk else (bk, ak, mode)
         sa_pair_scores[pk] = (factors.compatible, factors.risk, factors.quality)
 
     sa_state: dict[int, str] = {}
@@ -711,7 +800,7 @@ def _run_sa_refinement(
         all_room_keys=[r.key for r in room_configs],
         room_max_cats={r.key: r.max_cats for r in room_configs},
         room_stim={r.key: r.base_stim for r in room_configs},
-        room_modes={r.key: r.mode_key for r in room_configs},
+        room_modes={r.key: _sa_mode_key(r.mode_key, r.base_stim) for r in room_configs},
         fixed_ids=sa_ey_fixed,
         immovable_ids=sa_immovable,
         hater_key_map=sa_haters,
@@ -831,18 +920,13 @@ def optimize_room_distribution(
             fallback_rooms_for_kittens = [
                 room for room in room_configs if not room.room_type.uses_profile
             ]
-            # Quietest room wins, so a full nursery overflows into the
-            # fallback rather than into a loud breeding room. Ties go to the
-            # fallback: with no stimulation advantage to gain there is no
-            # reason to consume a breeding slot.
-            nursery_order = sorted(
-                room_configs,
-                key=lambda room: (
-                    float(room.base_stim or 0.0),
-                    room.room_type.uses_profile,
-                    room.key,
-                ),
-            )
+            # Quietest room wins while rooms are equally comfortable, so a
+            # nursery overflows into the fallback rather than into a loud
+            # breeding room. Ties go to the fallback: with no stimulation
+            # advantage to gain there is no reason to consume a breeding
+            # slot. The order is recomputed per kitten because it depends on
+            # how full each room is by then — the quietest room stops being
+            # the best answer once it has used up its free four.
             # Last resort keeps the old guarantee that kittens are always
             # placed somewhere, even when every room is at capacity.
             overflow_keys = (
@@ -851,7 +935,7 @@ def optimize_room_distribution(
             )
             for i, cat in enumerate(kitten_cats):
                 placed = False
-                for room in nursery_order:
+                for room in balanced_room_order(room_configs, room_effective_counts):
                     if _can_fit_single(room, room_effective_counts[room.key], cat):
                         room_assignments[room.key].append(cat)
                         room_effective_counts[room.key] += 1
@@ -1094,6 +1178,7 @@ def optimize_room_distribution(
         candidate_pairs = [p for p in candidate_pairs if p[0].db_key not in assigned_cats and p[1].db_key not in assigned_cats]
 
         lover_locked: set[int] = has_mutual_lover if params.avoid_lovers else set()
+        _sortable_traits = _all_profile_traits(params)
         pairs_with_scores: list[dict] = []
         for pair_idx, (cat_a, cat_b) in enumerate(candidate_pairs):
             if pair_idx % 200 == 0 and _cancelled():
@@ -1101,7 +1186,18 @@ def optimize_room_distribution(
             if params.avoid_lovers and (cat_a.db_key in lover_locked or cat_b.db_key in lover_locked):
                 if not is_mutual_lover_pair(cat_a, cat_b, lover_key_map):
                     continue
-            factors = _score_pair_cached(cat_a, cat_b, best_ey_room or _best_breeding_room(room_configs) or room_configs[0], params.stimulation)
+            # Rank the pair at the best room it could actually be given, not
+            # at a fixed global Stimulation. The room's own mode was already
+            # being used here while the Stimulation came from params, which
+            # understated exactly the pairs this ordering exists to promote:
+            # at Stimulation 50 a desired passive is only 55% likely, so a
+            # passive-carrier scored below an active-carrier (already
+            # guaranteed at 32) and lost the loud room to it.
+            _rank_room = best_ey_room or _best_breeding_room(room_configs) or room_configs[0]
+            factors = _score_pair_cached(
+                cat_a, cat_b, _rank_room,
+                _rank_room.base_stim if _rank_room.room_type.uses_profile else params.stimulation,
+            )
             if not factors.compatible or factors.risk > params.max_risk:
                 continue
             pairs_with_scores.append(
@@ -1109,6 +1205,9 @@ def optimize_room_distribution(
                     "cat_a": cat_a,
                     "cat_b": cat_b,
                     "risk": factors.risk,
+                    "stim_need": desired_trait_stim_need(
+                        cat_a, cat_b, _sortable_traits
+                    ),
                     "avg_stats": sum(cat_a.base_stats[s] + cat_b.base_stats[s] for s in STAT_NAMES) / (2 * len(STAT_NAMES)),
                     "quality": factors.quality,
                     "must_breed_bonus": factors.must_breed_bonus,
@@ -1116,8 +1215,21 @@ def optimize_room_distribution(
                 }
             )
 
+        # Quality stays ahead of Stimulation appetite. Quality already carries
+        # the inbreeding discount (and the Stimulation-scaled trait bonus), so
+        # ranking appetite above it let any trait-carrier jump ahead of any
+        # non-carrier however inbred it was — a 40%-risk sibling pair carrying
+        # a lightly-weighted trait outranked an unrelated 2%-risk pair.
+        # Appetite only breaks ties now; which room a pair actually gets is
+        # decided per-pair in the placement loop below, which is where the
+        # Stimulation ordering really comes from.
         pairs_with_scores.sort(
-            key=lambda p: (p["must_breed_bonus"], p["lover_bonus"], p["quality"]),
+            key=lambda p: (
+                p["must_breed_bonus"],
+                p["lover_bonus"],
+                p["quality"],
+                p["stim_need"],
+            ),
             reverse=True,
         )
 
@@ -1170,6 +1282,28 @@ def optimize_room_distribution(
                     )
                 else:
                     iter_rooms = list(room_configs)
+                # Prefer rooms that can still take the pair for free. The
+                # first four cats in a room cost no Comfort, so this only
+                # starts reordering once a room is genuinely filling up —
+                # until then the sort is stable and the user's room priority
+                # (or the trait-loss order above) decides, as before. Without
+                # it the top-priority room absorbs pair after pair until it
+                # hits its cap, and the rooms below it stay empty whenever
+                # the house has more capacity than cats.
+                # Crowding first (see balanced_room_order), then the room
+                # this pair actually does best in. Several rooms share a
+                # crowding level for most of the fill, so this is what hands
+                # the high-Stimulation rooms to the pairs carrying desired
+                # passives — their trait bonus scales with the room's
+                # Stimulation, while an active-carrier's is already maxed out
+                # at 32 and a mutation-carrier's barely moves.
+                iter_rooms.sort(
+                    key=lambda r: (
+                        crowding_after(room_effective_counts.get(r.key, 0), 2),
+                        -_score_pair_cached(a, b, r, r.base_stim).quality
+                        if r.room_type.uses_profile else 0.0,
+                    )
+                )
                 for room in iter_rooms:
                     if not room.room_type.uses_profile:
                         continue
@@ -1265,10 +1399,11 @@ def optimize_room_distribution(
         # Throughput mode deliberately keeps non-pairing cats out of breeding
         # rooms so they don't dilute pair density, so only do this in the
         # default mode.
-        quiet_rooms = [] if params.maximize_throughput else sorted(
-            (room for room in room_configs if room.room_type.uses_profile),
-            key=lambda room: (float(room.base_stim or 0.0), room.key),
-        )
+        # Ordered per cat below, since how full each room is by then decides
+        # which one keeps its Comfort highest.
+        quiet_rooms = [] if params.maximize_throughput else [
+            room for room in room_configs if room.room_type.uses_profile
+        ]
         # Cats carrying a disorder that no tree wants are better off in the
         # highest-Health room, where the Health effect can cure it away —
         # unless they are marked Must Breed, in which case the user wants
@@ -1288,7 +1423,7 @@ def optimize_room_distribution(
             ):
                 preferred = healing_rooms
             placed_quiet = False
-            for room in (*preferred, *quiet_rooms):
+            for room in (*preferred, *balanced_room_order(quiet_rooms, room_effective_counts)):
                 if _can_fit_single(room, room_effective_counts[room.key], cat):
                     room_assignments[room.key].append(cat)
                     room_effective_counts[room.key] += 1

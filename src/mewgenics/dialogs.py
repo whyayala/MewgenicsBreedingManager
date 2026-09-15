@@ -815,10 +815,12 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Desired mutations and birth defects now actually influence the Room Optimizer. It had its own private copy of the trait matcher, and that copy compared the planner's <code>name|id</code> keys against a bare trait name — a comparison that can never succeed, so picking a desired trait had no effect on room scoring whatsoever.",
-            "Measured on a real save: with a desired mutation selected, the desired-trait bonus now applies to all 2,567 pairs that involve a carrier, where previously it applied to none.",
-            "This is the mirror image of the v5.10.2 bug. There, id-only matching listed cats that did not carry the trait (false positives in the Mutation Planner); here, full-key matching against a name found nobody at all (false negatives in the Room Optimizer). Same root cause: two copies of one matcher that drifted apart.",
-            "The duplicate is gone \u2014 both the planners and the optimizer now call one shared implementation, so they cannot diverge again. The optimizer's unwanted-disorder and trait-loss rules were never affected; they match disorder names, which carry no id.",
+            "More Depth is now the only Room Optimizer search and the toggle is gone. Every optimizer change since v5.10.0 had to be made twice, once for each pass, and the deep-search half kept getting missed \u2014 so now it always runs and a divergence shows up immediately.",
+            "More Depth had been losing to its own starting point. It scored rooms on average quality per *possible* pairing, which falls as a room fills whether or not the extra cats pair up, so it optimised something the app never displays. On a 93-cat save it finished with 11 pairs where the greedy seed it started from had 13.",
+            "It now ranks whole pairs first and quality second \u2014 the same order the greedy pass already used. Same save: 13 pairs, matching the seed instead of undercutting it.",
+            "High-Stimulation rooms now go to the pairs that can use them. A passive is only certain at 95 Stimulation, an active already at 32, a mutation never; the desired-trait bonus was a flat number, identical in a dead room and a loud one. It now scales with the odds the trait reaches the kitten in that room.",
+            "Mutations: each body part resolves to one mutation, so two carriers of different mutations on the same part is a coin flip no matter how loud the room. Pair scoring prefers the mate that leaves the part clear, and the pair-row mutation odds now follow the real curve instead of a flat 80%.",
+            "Rooms are also no longer filled one at a time \u2014 a house with more capacity than cats used to leave whole rooms empty.",
         ]
 
         root = QVBoxLayout(self)

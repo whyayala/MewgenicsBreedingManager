@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.10.3`
+Current release: `v5.12.0`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,56 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.12.0
+
+**High-Stimulation rooms now go to the pairs that can actually use them.**
+
+Stimulation buys a different amount depending on what you are trying to pass down, and the optimizer was ignoring that entirely — the desired-trait bonus was a flat number, identical in a dead room and a loud one, so nothing pulled a pair toward the Stimulation it needed. Per the wiki's Breeding page:
+
+| Trait | Inheritance chance | Certain at |
+|---|---|---|
+| Passive ability | 5% + 1% × Stim | **95 Stim** |
+| Active ability (first) | 20% + 2.5% × Stim | **32 Stim** |
+| Visual mutation | 50% + 50% × Stim/(200 + \|Stim\|) | never |
+
+- The desired-trait bonus is now scaled by the odds that trait actually reaches the kitten **at that room's Stimulation**. A pair carrying a desired passive keeps gaining all the way to 95; an active-carrier stops caring past 32; a mutation-carrier is already past halfway at 0 Stimulation and creeps up slowly. Ranking rooms this way hands the loudest rooms to the passive-carriers first, then the active-carriers — which is the order the wiki implies.
+- Pairs are also **ordered** by how much Stimulation they can still convert into an inherited trait, so the stim-hungry pairs get first pick rather than whoever happened to score highest overall.
+- Once an active is guaranteed the pair stops competing for louder rooms, so a room above 32 Stimulation is free to go to someone who still benefits. That is deliberate — more Stimulation buys an active-carrier nothing.
+- **More Depth honours this too.** The SA pass looks pair scores up by room *tree*, and keying on the tree alone collapsed every room sharing one into a single entry — a three-room house folded Stimulation 0, 50 and 95 into whichever was cached last. More Depth could not tell a loud Best Pairs room from a quiet one, and seeded with the passive pair in the quiet room it left them there. The lookup now includes the room's Stimulation.
+- Pairs are ranked at the best room they could actually be given rather than at a fixed Stimulation of 50. At 50 a desired passive is only 55% likely, so a passive-carrier ranked *below* an active-carrier — already guaranteed at 32 — and lost the loud room to it.
+- **Inbreeding still leads.** Pair ordering is by the risk-discounted score first and Stimulation appetite only as a tiebreak. Ranking appetite above the score briefly let any trait-carrier jump ahead of any non-carrier however inbred — a 40%-risk sibling pair carrying a lightly-weighted trait outranked an unrelated 2%-risk pair. The `max_risk` cap was never affected either way: a desired trait has never bought a pair past it.
+
+**Mutations: two carriers can be worse than one.**
+
+Each body part resolves to exactly one mutation. One carrier against a plain part is a Stimulation-biased roll that a loud room can push most of the way; two carriers of *different* mutations on the same part is a coin flip that no amount of Stimulation changes.
+
+- Pair scoring now penalises a desired mutation whose mate holds a different mutation on that same body part, so the optimizer prefers pairing a carrier with a cat that leaves the part clear.
+- The mutation odds shown on pair rows were a flat 80% regardless of Stimulation, room, or what the other parent had. They now follow the real curve: 100% when both parents carry the same mutation, the Stimulation-biased roll against a plain part, and 50% when the part is contested.
+
+### v5.11.0
+
+**More Depth is now the only search, and the toggle is gone.**
+
+Every optimizer change since v5.10.0 has had to be made twice — once for the greedy placement and once for the annealing pass — and the annealing half kept getting missed. Removing the choice means the deep search is always exercised, so a divergence shows up immediately instead of only when someone happens to toggle it on.
+
+- **More Depth was losing to its own starting point.** Its per-room score was `sum_q / total_possible` — average quality per *possible* pairing, which falls as a room fills whether or not the extra cats actually pair up. It was optimising something the app never displays, and finished below the greedy state it started from: on a 93-cat save, **11 pairs at 562.0** total quality against the seed's **13 at 584.9**. It now ranks whole pairs first and quality second, the same order the greedy pass's per-room DP already used. Same save: **13 pairs at 584.6**, matching the seed instead of undercutting it. (The remaining 0.3 is the move penalty declining to shuffle cats for no gain.)
+- The greedy pass has not gone anywhere — it is the *seed* the annealing starts from, not an alternative to it. What is gone is the choice, and with it a whole class of "the fix only landed in one of the two passes" bug.
+- Cost on that save: **0.10 s → 4.3 s** at 93 cats. A one-off per Optimize press, and Cancel still works throughout.
+- The Perfect 7 Planner keeps its own More Depth toggle. That is a different annealing implementation over pair lists, not the room solver, and is untouched here.
+
+**Fixed: rooms were filled one at a time, so spare capacity left rooms empty.**
+
+Reported as "I cut down to 60 cats and now nothing gets placed in 2nd floor left" — and it happened whatever tree that room was set to, because the room never received a cat to score in the first place.
+
+Cats reached rooms through two orderings, and both filled each room to its cap before touching the next: pairs went to the first room in your priority order that fit, and unpaired cats were parked in the quietest room until it was full. A room therefore got nothing until every room ahead of it in *both* orders was full — so whenever the house had more capacity than cats, the rooms at the tail starved. Cutting the roster is exactly what tips a house over that line.
+
+- Measured on a real save, 4 breeding rooms and 60 cats: **10 / 27 / 0 / 23** before, **10 / 17 / 16 / 17** after. At 93 cats every room was used, at 75 the room thinned to 11, at 60 and below it was empty.
+- Rooms are now ranked by how much Comfort they have given up to crowding, least-crowded first, for pairs and for parked cats alike. Because the first four cats in a room cost no Comfort, an even house sits further from the fight threshold than a packed one at the same headcount.
+- The quiet-room preference survives: rooms tie while they are all still inside their free four, and the tie breaks on stimulation exactly as before, so kittens and unpaired cats still prefer the quietest room — they just stop piling into it past the fourth cat.
+- **More Depth** scores a crowding penalty now, so the annealing pass has no reason to repack what the first pass spread out. The penalty is deliberately small: it settles otherwise-equal layouts rather than outvoting pair quality.
+- Pair counts held or improved in every scenario measured, so the spread does not cost breeding throughput.
+- Throughput mode is unchanged. It packs rooms on purpose to keep pair density high, which is the whole point of that mode.
 
 ### v5.10.3
 

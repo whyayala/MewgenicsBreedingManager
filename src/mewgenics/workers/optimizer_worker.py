@@ -67,7 +67,7 @@ class RoomOptimizerWorker(QThread):
         sa_temperature = float(p.get("sa_temperature", 8.0) or 8.0)
         sa_neighbors = int(p.get("sa_neighbors", 120) or 120)
         mode_family = bool(p.get("mode_family", False))
-        use_sa = bool(p.get("use_sa", False))
+        use_sa = bool(p.get("use_sa", True))
         planner_traits = list(p.get("planner_traits", []))
         mode_profiles = _normalize_mutation_mode_profiles(p.get("mode_profiles", {}), legacy_traits=planner_traits)
         available_rooms = [room for room in p.get("available_rooms", []) if room in ROOM_DISPLAY]

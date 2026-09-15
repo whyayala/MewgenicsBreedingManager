@@ -27,7 +27,8 @@ src/
   breeding.py                       # Breeding compatibility, scoring, offspring tracking
   room_optimizer/
     types.py                        # Dataclasses: RoomConfig, OptimizationParams, ScoredPair, etc.
-    optimizer.py                    # Room assignment algorithm
+    optimizer.py                    # Room assignment: greedy placement + SA refinement
+    parallel.py                     # Simulated-annealing chains (ProcessPoolExecutor)
   visual_mutation_catalog.py        # Lookup tables: (slot, mutation_id) -> display name
   breed_priority/                   # Detailed Scoring view (standalone UI package)
     __init__.py                     # BreedPriorityView — main widget
@@ -72,6 +73,7 @@ src/
       perfect_planner.py            # PerfectCatPlannerView + 4 sub-panels
       calibration.py                # CalibrationView
       mutation_planner.py           # MutationDisorderPlannerView + planner trait helpers
+      manual_scoring.py             # ManualScoringView (Simple Scoring)
       furniture.py                  # FurnitureView
     utils/
       paths.py                      # Bundle dir, save dir, gpak paths, file finders
@@ -101,7 +103,7 @@ Everything that touches the binary save format or genetic math lives here. No Qt
 - **`SaveData`**: Container for a fully-parsed save (cats list + metadata).
 - **`GameData`**: Lookup tables for visual mutations and furniture definitions. Populated at startup from `.gpak` files.
 - **`FurnitureItem / FurnitureDefinition / FurnitureRoomSummary`**: Furniture parsing and room stat aggregation.
-- **`parse_save(path) -> (cats, errors)`**: Top-level entry point. Constructs Cat objects, resolves parent/child links, computes generation depths.
+- **`parse_save(path) -> SaveData`**: Top-level entry point. Constructs Cat objects, resolves parent/child links, computes generation depths. `SaveData` unpacks as `(cats, errors, unlocked_house_rooms)` for backwards compatibility — it is a 3-tuple, not the 2-tuple older call sites assumed — and also carries `furniture`, `furniture_data`, `pedigree_map` and `accessible_cats`.
 - `can_breed`, `risk_percent`, `kinship_coi`, `raw_coi`, `shared_ancestor_counts`: Breeding eligibility and kinship math.
 
 Key constants:
@@ -122,12 +124,32 @@ No Qt dependencies.
 
 ### `room_optimizer/` — Room Assignment
 
-Greedy optimizer that assigns cats to rooms to maximize breeding outcomes.
+Assigns cats to rooms to maximize breeding outcomes. Two stages, always both:
+a greedy placement pass, then a simulated-annealing refinement that starts
+from it. The greedy pass is the SA pass's **seed**, not an alternative to it —
+there is no greedy-only mode in the UI.
 
-- **`RoomType`** (enum): `BREEDING`, `FALLBACK`, `GENERAL`, `NONE`
-- **`RoomConfig`**: Per-room settings (capacity, type, base stimulation).
-- **`OptimizationParams`**: Solver config (min_stats, max_risk, stimulation threshold).
+- **`RoomType`** (enum): `BEST_PAIRS`, `MELEE`, `RANGED`, `MAGIC`, `FALLBACK`, plus
+  `NONE`. `BREEDING` and `GENERAL` are legacy aliases of `BEST_PAIRS`/`FALLBACK`
+  kept for old configs. `uses_profile` is the test for "is a pairing room".
+- **`RoomConfig`**: Per-room settings — `key`, `room_type`, `max_cats`, `base_stim`,
+  `evolution`, `health`, `comfort` (signed; rooms can be negative) and
+  `min_comfort` (the per-room Comfort floor set in the Room Priority panel,
+  which is what actually derives `max_cats`).
+- **`OptimizationParams`**: Solver config — `min_stats`, `max_risk`,
+  `comfort_target`, the SA knobs (`sa_temperature`, `sa_neighbors_per_temp`,
+  `sa_chains`, `move_penalty_weight`), and the behaviour flags
+  (`mode_profiles`, `send_kittens_to_fallback`, `avoid_trait_loss`,
+  `maximize_throughput`, `mode_family`). `use_sa` defaults to `True` and exists
+  only so tests can exercise the greedy seed without paying for annealing.
 - **`optimize_room_distribution(cats, rooms, params) -> OptimizationResult`**: Main solver entry point.
+
+**Both stages score independently.** The greedy pass calls `breeding.score_pair`;
+the SA pass works from a frozen `pair_scores` table keyed by
+`(cat_a, cat_b, room_identity)` built in `_run_sa_refinement`. A change to pair
+scoring or placement that only lands in one of them is the single most common
+bug in this package — it has happened repeatedly. When you touch either, check
+the other, and prefer an end-to-end test that runs with `use_sa=True`.
 
 ### `mewgenics/` — Qt UI Package
 
@@ -185,6 +207,53 @@ Cat sprites are composited from DefinedShape PNGs in `src/CatAssets/DefinedShape
 - `CatAssets/swf_database/shapes.db` — Shape bounds metadata (10K+ entries)
 - `CatAssets/DefinedShapes.zip` — Pre-rendered shape PNGs (6,894 files, 16.5 MB)
 
+## Game Mechanics Reference
+
+The app models the game's own formulas. When changing scoring, inheritance or
+room sizing, check the source rather than the existing code — several
+hardcoded constants predate the 1.1 balance overhaul.
+
+**Primary sources** ([The Mewgenics Wiki](https://mewgenics.wiki.gg/)):
+
+- [Breeding](https://mewgenics.wiki.gg/wiki/Breeding) — inheritance formulas for stats, abilities, passives, mutations and birth defects
+- [Stimulation](https://mewgenics.wiki.gg/wiki/Stimulation) — what the Stimulation room stat does
+- [Stats/House Stats](https://mewgenics.wiki.gg/wiki/Stats/House_Stats) — Comfort, Stimulation, Health, Mutation, Appeal
+- [Fighting](https://mewgenics.wiki.gg/wiki/Fighting) — how Comfort and Charisma drive the overnight fight roll
+- [Mutations](https://mewgenics.wiki.gg/wiki/Mutations) — the visual mutation and birth defect catalog
+
+### Inheritance, and why Stimulation is not worth the same to every pair
+
+| Trait | Chance | Certain at | Implemented in |
+|---|---|---|---|
+| Passive ability | `5% + 1% × Stim` | **95 Stim** | `breeding.trait_inheritance_chance` |
+| Active ability (first) | `20% + 2.5% × Stim` | **32 Stim** | same |
+| Active ability (second) | `2% + 0.5% × Stim` | 196 Stim | `utils/abilities.py` display only |
+| Visual mutation / stat | `50% + 50% × Stim/(200 + \|Stim\|)` | never | `save_parser._stimulation_inheritance_weight` |
+| Birth defect | rolls at `Stim − 2 × inbreeding%` | — | `save_parser._defect_inheritance_weight` |
+
+The differing thresholds are the whole reason the optimizer ranks rooms per
+pair: a desired passive keeps gaining right up to 95 Stimulation, an active
+stops caring past 32, and a mutation is already past halfway at 0. A flat
+trait bonus makes every room look identical and the ordering collapses.
+
+**Body parts hold one mutation each.** One carrier against a plain part is the
+Stimulation-biased roll above; two carriers of *different* mutations on the
+same part is a 50/50 pick between them that Stimulation cannot shift; both
+carrying the same one is certain. `breeding._mutation_slot_conflict` detects
+the contested case from `Cat.visual_mutation_entries[*]["slot_key"]`.
+
+**Same-sex pairs mate but produce no kitten** (Gay Strays). A neutral/ditto
+cat's compatibility multiplier is 1 on both sides, which is a gay cat's only
+productive pairing. See `save_parser.can_breed` and `breeding.game_compatibility`.
+
+### Comfort and fight risk
+
+Comfort **drops 1 for each cat in a room above 4** — the first four are free.
+Fight avoidance is `1 − 0.1 × Comfort`, so a room at Comfort 0 (its nominal
+"full" capacity) carries roughly a 16% overnight fight chance against about 1%
+at Comfort 10. That is why `COMFORT_FREE_CATS = 4` and why rooms are sized by
+a Comfort floor rather than a headcount.
+
 ## Conventions
 
 - Windows-targeted: save paths use `%LOCALAPPDATA%`, build produces `.exe`
@@ -201,15 +270,27 @@ Cat sprites are composited from DefinedShape PNGs in `src/CatAssets/DefinedShape
 - **Cross-class access**: Views expose public properties/methods (`room_priority_panel`, `cat_locator`, `offspring_tracker`, `set_navigate_to_cat_callback()`, `save_session_state()`) for MainWindow to use. Avoid accessing `_private` attributes across class boundaries.
 - **Module-level initialization**: `mewgenics/__init__.py` runs setup (game data, locale, tags, thresholds) once when the package is first imported. Modules that need initialized state import it after this runs.
 - **DefinedShape extraction**: Shapes are extracted once and cached as PNGs. The ZIP is the primary source (fast, no game dependency). GPAK is the fallback (requires game). Individual PNGs are gitignored; only the ZIP is tracked.
+- **Room capacity comes from Comfort, not a headcount**: the Room Priority panel takes a per-room **Min Comfort**; `_room_capacity_from_entry()` turns that into `max_cats`. Filling a room to Comfort 0 is its nominal capacity and also its worst fight risk, so the default floor is 10.
+- **Placement spreads, it does not pack**: `balanced_room_order()` ranks rooms by `crowding_after()` — Comfort already given up — so rooms tie while they are all inside their free four and the stimulation tiebreak still sends kittens and parked cats to the quietest one. Filling rooms one at a time left later rooms empty whenever the house had more capacity than cats.
+- **One trait matcher**: `save_parser.cat_has_visual_trait()` is canonical, and `breeding.py` and `mewgenics/utils/abilities.py` both delegate to it. It cannot live in the UI package — importing anything from `mewgenics` runs its `__init__.py`, and `breeding.py` is Qt-free. Two copies drifted apart once already; don't add a third.
+- **Trait keys are `"<name>|<id>"`**: visual mutation ids are reused across body parts (defect 700 is five different traits), so both halves must match. Name-only or id-only comparison is always a bug.
+- **SA ranks whole pairs before quality**: `_state_score` uses `valid_pairs * 1000 + sum_q`, matching the greedy DP's `(count, quality, -risk)`. Normalizing by possible pairings instead made SA optimize something the app never displays and finish below its own seed.
 
 ## Release Checklist
 
 Before pushing a release commit:
 
-1. Update `VERSION` file with the new version number.
+1. Update `VERSION` file with the new version number. It feeds `APP_VERSION`
+   (via `mewgenics/utils/paths.py`) and the CI zip names.
 2. Update `WhatsNewDialog` default highlights and body text in `src/mewgenics/dialogs.py` to reflect the new release.
 3. Update `README.md` current release and add release notes.
-4. Commit, tag (`vX.Y.Z`), push, and create a GitHub release.
+4. Commit and merge, then tag `vX.Y.Z` on `main`.
+
+`.github/workflows/build.yml` triggers on `v*` tags: it builds the Windows and
+Linux zips and then **publishes the GitHub release itself**. Creating the
+release first (`gh release create vX.Y.Z --notes-file …`) keeps your own notes
+— CI sees it already exists and just uploads the assets. Pushing the tag alone
+gets a release with auto-generated notes.
 
 ## tools/field_mapper/
 

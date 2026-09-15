@@ -380,7 +380,9 @@ def test_room_optimizer_places_setup_between_rooms_and_pairs(qt_app, planner_con
     assert view._bottom_tabs.widget(3) is view._details_pane
     assert view._bottom_tabs.widget(4) is view._cat_locator
     assert view._setup_splitter.orientation() == Qt.Horizontal
-    assert view._deep_optimize_btn.text().startswith("More Depth")
+    # The More Depth toggle is gone: the annealing refinement is the only
+    # search now, so there is no mode button to place among the actions.
+    assert not hasattr(view, "_deep_optimize_btn")
 
 
 def test_room_optimizer_result_table_preserves_room_cat_mapping_with_sorting(qt_app, planner_config):
@@ -1507,11 +1509,12 @@ def test_room_optimizer_uses_shared_sa_settings_when_calculating(qt_app, planner
         _make_cat(2, unique_id="uid-b", gender_display="F", name="Bravo"),
     ])
 
-    view._calculate_optimal_distribution(use_sa=True)
+    view._calculate_optimal_distribution()
 
     assert captured["started"] is True
     assert captured["params"]["sa_temperature"] == 12.5
     assert captured["params"]["sa_neighbors"] == 73
+    # Always on — there is no greedy-only mode to fall back to.
     assert captured["params"]["use_sa"] is True
 
 

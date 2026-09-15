@@ -571,6 +571,105 @@ def evaluate_pair(
     return result
 
 
+# Stimulation thresholds at which each kind of trait is guaranteed to pass
+# down, from the wiki's Breeding page. These are what make a high-Stimulation
+# room worth more to one pair than to another:
+#
+#   passive   5% + 1%    x Stim  -> certain at 95 Stim
+#   active   20% + 2.5%  x Stim  -> certain at 32 Stim
+#   mutation 50% + 50%   x Stim/(200 + |Stim|) -> asymptotic, never certain
+#
+# So a desired passive keeps gaining from every extra point of Stimulation
+# right up to 95, an active stops caring past 32, and a mutation is already
+# past halfway at 0 and creeps up slowly from there. Ranking rooms by the
+# chance a pair's *desired* traits actually pass down therefore sends the
+# passive-carriers to the loudest rooms, then the active-carriers, and leaves
+# the mutation-carriers indifferent — which is the order the wiki implies.
+
+PASSIVE_INHERITANCE_BASE = 0.05
+PASSIVE_INHERITANCE_PER_STIM = 0.01
+
+ACTIVE_INHERITANCE_BASE = 0.20
+ACTIVE_INHERITANCE_PER_STIM = 0.025
+
+
+def trait_inheritance_chance(category: str, stimulation: float) -> float:
+    """Chance a trait of *category* passes down at *stimulation*.
+
+    Mutations and defects use the part-comparison curve from save_parser
+    (50/50 at 0 Stimulation, asymptotic after); abilities and passives use
+    their own linear ramps. Anything unrecognised falls back to the part
+    curve, which is the least opinionated of the three.
+    """
+    stim = float(stimulation)
+    if category == "passive":
+        return max(0.0, min(1.0, PASSIVE_INHERITANCE_BASE + PASSIVE_INHERITANCE_PER_STIM * stim))
+    if category == "ability":
+        return max(0.0, min(1.0, ACTIVE_INHERITANCE_BASE + ACTIVE_INHERITANCE_PER_STIM * stim))
+    return _stimulation_inheritance_weight(stim)
+
+
+def _mutation_slot_conflict(cat: Cat, other: Cat, trait_key: str, *, want_defect: bool) -> bool:
+    """Does *other* carry a different mutation on the same body part as the
+    desired one *cat* carries?
+
+    Each body part resolves to exactly one mutation in the kitten. When only
+    one parent has a mutation there, it is that mutation against an ordinary
+    part and Stimulation biases toward it. When both parents have *different*
+    mutations on the same part the game picks between the two, so the desired
+    one drops to a coin flip no matter how high the room's Stimulation is —
+    pairing two carriers of different mutations is actively worse than
+    pairing one carrier with a plain cat.
+    """
+    key = str(trait_key or "").strip().lower()
+    if not key:
+        return False
+    name, _, _ = key.rpartition("|") if "|" in key else (key, "", "")
+    slots = {
+        entry.get("slot_key")
+        for entry in (getattr(cat, "visual_mutation_entries", None) or [])
+        if bool(entry.get("is_defect")) == want_defect
+        and str(entry.get("name", "")).strip().lower() == name
+    }
+    if not slots:
+        return False
+    for entry in getattr(other, "visual_mutation_entries", None) or []:
+        if entry.get("slot_key") not in slots:
+            continue
+        if str(entry.get("name", "")).strip().lower() != name:
+            return True
+    return False
+
+
+def desired_trait_stim_need(
+    a: Cat, b: Cat, planner_traits: Optional[Sequence[dict]],
+) -> float:
+    """How much this pair stands to gain from a high-Stimulation room.
+
+    Sums each desired trait the pair actually carries, weighted by the
+    headroom its category still has at high Stimulation. Used to decide which
+    pairs get first pick of the loud rooms, so the pairs that can still
+    convert Stimulation into inherited traits are placed before the ones that
+    cannot.
+    """
+    need = 0.0
+    for t in planner_traits or ():
+        category = str(t.get("category", ""))
+        key = str(t.get("key", ""))
+        if not key:
+            continue
+        if not (_cat_has_trait(a, category, key) or _cat_has_trait(b, category, key)):
+            continue
+        weight = float(t.get("weight", 0)) / 10.0
+        # Headroom between a dead room and a loud one, per category.
+        headroom = (
+            trait_inheritance_chance(category, 100.0)
+            - trait_inheritance_chance(category, 0.0)
+        )
+        need += weight * headroom
+    return need
+
+
 def score_pair(
     a: Cat,
     b: Cat,
@@ -626,10 +725,26 @@ def score_pair(
             continue
         a_has = _cat_has_trait(a, category, key)
         b_has = _cat_has_trait(b, category, key)
-        if a_has or b_has:
-            trait_bonus += wf * 5.0
-            if a_has and b_has:
-                trait_bonus += wf * 2.5
+        if not (a_has or b_has):
+            continue
+        # Scale by the odds the trait actually reaches the kitten in THIS
+        # room. Without this the bonus was a flat number and every room
+        # looked equally good for every desired trait, so a pair carrying a
+        # desired passive — the category that gains the most from
+        # Stimulation — had no reason to end up in the loud room.
+        chance = trait_inheritance_chance(category, stimulation)
+        trait_bonus += wf * 5.0 * chance
+        if a_has and b_has:
+            trait_bonus += wf * 2.5 * chance
+        if category in ("mutation", "defect"):
+            want_defect = category == "defect"
+            carrier, mate = (a, b) if a_has else (b, a)
+            if not (a_has and b_has) and _mutation_slot_conflict(
+                carrier, mate, key, want_defect=want_defect
+            ):
+                # The mate's own mutation on that part turns the roll into a
+                # coin flip, so Stimulation buys nothing here.
+                trait_bonus -= wf * 5.0 * max(0.0, chance - 0.5)
 
     stat_priority_bonus = _stat_priority_bonus(projection, stat_priority)
 

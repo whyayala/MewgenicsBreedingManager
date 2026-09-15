@@ -255,7 +255,6 @@ class RoomOptimizerView(QWidget):
             "room_optimizer.toggle.ignore_stat_priority": "Ignore Class Stat Priorities",
             "room_optimizer.toggle.send_kittens_to_fallback": "Kittens to Quiet Rooms",
             "room_optimizer.toggle.avoid_trait_loss": "Avoid Trait Loss",
-            "room_optimizer.toggle.use_sa": "More Depth",
         }
         state = _tr("common.on", default="On") if btn.isChecked() else _tr("common.off", default="Off")
         btn.setText(f"{_tr(label_key, default=defaults.get(label_key, label_key))}: {state}")
@@ -468,7 +467,6 @@ class RoomOptimizerView(QWidget):
         self._restoring_session_state = False
         self._pending_initial_restore_run = False
         self._pending_cache_recalc = False
-        self._pending_cache_recalc_sa = False
         self._selected_room_data: Optional[dict] = None
 
         root = QVBoxLayout(self)
@@ -790,7 +788,7 @@ class RoomOptimizerView(QWidget):
         self._setup_info_panel_layout.addWidget(self._setup_info_browser, 1)
 
         self._optimize_btn = QPushButton()
-        self._optimize_btn.clicked.connect(lambda: self._calculate_optimal_distribution(use_sa=self._deep_optimize_btn.isChecked()))
+        self._optimize_btn.clicked.connect(lambda: self._calculate_optimal_distribution())
         self._optimize_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._optimize_btn.setStyleSheet(
             "QPushButton { background:#1f5f4a; color:#f2f7f3; border:1px solid #3f8f72; "
@@ -798,20 +796,6 @@ class RoomOptimizerView(QWidget):
             "QPushButton:hover { background:#26735a; }"
             "QPushButton:pressed { background:#184b3a; }"
         )
-
-        self._deep_optimize_btn = QPushButton()
-        self._deep_optimize_btn.setCheckable(True)
-        self._deep_optimize_btn.setChecked(_saved_optimizer_flag("use_sa", False))
-        self._deep_optimize_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self._deep_optimize_btn.setStyleSheet(
-            "QPushButton { background:#2a2a5a; color:#bbbbee; border:1px solid #4a4a8a; "
-            "border-radius:4px; padding:6px 12px; font-size:11px; font-weight:bold; }"
-            "QPushButton:hover { background:#3a3a6a; color:#ddd; }"
-            "QPushButton:checked { background:#3a5a3a; color:#aaffaa; border:1px solid #4a8a4a; }"
-            "QPushButton:disabled { background:#1a1a32; color:#555; border-color:#2a2a4a; }"
-        )
-        self._bind_persistent_toggle(self._deep_optimize_btn, "room_optimizer.toggle.use_sa", "use_sa")
-        self._deep_optimize_btn.toggled.connect(lambda _: self._save_session_state())
 
         self._cancel_btn = QPushButton()
         self._cancel_btn.setText(_tr("room_optimizer.cancel_btn", default="Cancel"))
@@ -828,7 +812,6 @@ class RoomOptimizerView(QWidget):
         self._import_planner_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._top_actions_layout.addWidget(self._optimize_btn)
         self._top_actions_layout.addWidget(self._cancel_btn)
-        self._top_actions_layout.addWidget(self._deep_optimize_btn)
         self._top_actions_layout.addWidget(self._import_planner_btn)
         self._top_actions_layout.addStretch(1)
         self._setup_splitter.addWidget(controls_wrap)
@@ -980,11 +963,6 @@ class RoomOptimizerView(QWidget):
         self._minimize_variance_checkbox.setChecked(False if enabled else _saved_optimizer_flag("minimize_variance", True))
         self._minimize_variance_checkbox.setEnabled(not enabled)
         self._minimize_variance_checkbox.setToolTip("" if not enabled else _tr("room_optimizer.tooltip.variance"))
-        if hasattr(self, "_deep_optimize_btn"):
-            self._deep_optimize_btn.setEnabled(True)
-            self._deep_optimize_btn.setToolTip(
-                _tr("room_optimizer.more_depth_tooltip", default="Use simulated annealing for a slower, deeper search.")
-            )
         if hasattr(self, "_maximize_throughput_checkbox"):
             self._maximize_throughput_checkbox.setEnabled(not enabled)
         self._save_session_state()
@@ -1034,19 +1012,15 @@ class RoomOptimizerView(QWidget):
                 return
         if self._pending_initial_restore_run and alive_count >= 2:
             self._pending_initial_restore_run = False
-            use_sa = bool(self._session_state.get("use_sa", False))
             if self._cache is None:
                 self._pending_cache_recalc = True
-                self._pending_cache_recalc_sa = use_sa
             else:
-                self._calculate_optimal_distribution(use_sa=use_sa)
+                self._calculate_optimal_distribution()
         elif self._auto_recalculate and self._session_state.get("has_run") and alive_count >= 2:
-            use_sa = bool(self._session_state.get("use_sa", False))
             if self._cache is None:
                 self._pending_cache_recalc = True
-                self._pending_cache_recalc_sa = use_sa
             else:
-                self._calculate_optimal_distribution(use_sa=use_sa)
+                self._calculate_optimal_distribution()
 
     def set_available_rooms(self, rooms: list[str]):
         ordered = [room for room in ROOM_DISPLAY.keys() if room in set(rooms)]
@@ -1113,9 +1087,7 @@ class RoomOptimizerView(QWidget):
         self._cache = cache
         if cache is not None and self._pending_cache_recalc:
             self._pending_cache_recalc = False
-            use_sa = self._pending_cache_recalc_sa
-            self._pending_cache_recalc_sa = False
-            self._calculate_optimal_distribution(use_sa=use_sa)
+            self._calculate_optimal_distribution()
 
     def set_auto_recalculate(self, enabled: bool):
         self._auto_recalculate = bool(enabled)
@@ -1169,7 +1141,7 @@ class RoomOptimizerView(QWidget):
         else:
             self._persist_mode_profiles_fallback()
             if self.isVisible() and self._session_state.get("has_run") and len([c for c in self._cats if c.status != "Gone"]) >= 2:
-                self._calculate_optimal_distribution(use_sa=bool(self._session_state.get("use_sa", False)))
+                self._calculate_optimal_distribution()
 
     def _on_planner_traits_changed(self):
         self._planner_traits = self._planner_view.get_selected_traits() if self._planner_view is not None else []
@@ -1222,7 +1194,7 @@ class RoomOptimizerView(QWidget):
         if use_sa is not None:
             state["use_sa"] = bool(use_sa)
         else:
-            state["use_sa"] = bool(state.get("use_sa", False))
+            state["use_sa"] = bool(state.get("use_sa", True))
         if has_run is not None:
             state["has_run"] = bool(has_run)
         else:
@@ -1289,7 +1261,6 @@ class RoomOptimizerView(QWidget):
                 self._send_kittens_checkbox.setChecked(bool(state.get("send_kittens_to_fallback", self._send_kittens_checkbox.isChecked())))
             if hasattr(self, "_avoid_trait_loss_checkbox"):
                 self._avoid_trait_loss_checkbox.setChecked(bool(state.get("avoid_trait_loss", self._avoid_trait_loss_checkbox.isChecked())))
-            self._deep_optimize_btn.setChecked(bool(state.get("use_sa", False)))
             if hasattr(self, "_bottom_tabs"):
                 tab_index = state.get("bottom_tab_index", self._bottom_tabs.currentIndex())
                 try:
@@ -1337,7 +1308,6 @@ class RoomOptimizerView(QWidget):
                 self._send_kittens_checkbox.setChecked(False)
             if hasattr(self, "_avoid_trait_loss_checkbox"):
                 self._avoid_trait_loss_checkbox.setChecked(False)
-            self._deep_optimize_btn.setChecked(False)
             if hasattr(self, "_bottom_tabs"):
                 self._bottom_tabs.setCurrentIndex(3)
             self._room_priority_panel.reset_to_defaults()
@@ -1345,7 +1315,7 @@ class RoomOptimizerView(QWidget):
             self._restoring_session_state = False
         self._pending_initial_restore_run = False
         self.retranslate_ui()
-        self._save_session_state(has_run=False, use_sa=False)
+        self._save_session_state(has_run=False, use_sa=True)
 
     def _import_from_planner(self):
         if self._planner_view is None:
@@ -1469,11 +1439,6 @@ class RoomOptimizerView(QWidget):
         self._optimize_btn.setText(_tr("room_optimizer.optimize_btn"))
         self._cancel_btn.setText(_tr("room_optimizer.cancel_btn", default="Cancel"))
         self._set_mode_button_text(self._mode_toggle_btn.isChecked())
-        RoomOptimizerView._set_toggle_button_label(self._deep_optimize_btn, "room_optimizer.toggle.use_sa")
-        self._deep_optimize_btn.setEnabled(True)
-        self._deep_optimize_btn.setToolTip(
-            _tr("room_optimizer.more_depth_tooltip", default="Use simulated annealing for a slower, deeper search.")
-        )
         self._minimize_variance_checkbox.setEnabled(not self._mode_toggle_btn.isChecked())
         self._minimize_variance_checkbox.setToolTip(
             "" if not self._mode_toggle_btn.isChecked() else _tr("room_optimizer.tooltip.variance")
@@ -1546,7 +1511,7 @@ class RoomOptimizerView(QWidget):
             _tr("room_optimizer.table.details"),
         ])
 
-    def _calculate_optimal_distribution(self, use_sa: bool = False):
+    def _calculate_optimal_distribution(self):
         """Kick off background optimizer worker."""
         self._pending_cache_recalc = False
         if self._optimizer_worker is not None and self._optimizer_worker.isRunning():
@@ -1588,14 +1553,14 @@ class RoomOptimizerView(QWidget):
             "sa_temperature": sa_temperature,
             "sa_neighbors": sa_neighbors,
             "mode_family": mode_family,
-            "use_sa": use_sa,
+            "use_sa": True,
             "planner_traits": list(self._planner_traits),
             "mode_profiles": self._planner_mode_profiles,
             "available_rooms": list(getattr(self, "_available_rooms", [])),
             "room_config": self._room_priority_panel.get_config(),
             "room_stats": dict(self._room_summaries),
         }
-        self._save_session_state(has_run=True, use_sa=use_sa)
+        self._save_session_state(has_run=True, use_sa=True)
 
         self._optimize_btn.setEnabled(False)
         self._cancel_btn.setVisible(True)
@@ -1649,7 +1614,6 @@ class RoomOptimizerView(QWidget):
         maximize_throughput = result.get("maximize_throughput", False)
         sa_temperature = float(result.get("sa_temperature", 0.0) or 0.0)
         sa_neighbors = int(result.get("sa_neighbors", 0) or 0)
-        use_sa = result.get("use_sa", False)
 
         self._cat_locator.show_assignments(locator_data)
 
@@ -1803,7 +1767,6 @@ class RoomOptimizerView(QWidget):
             row_idx += 1
 
         filter_info = [f"mode: {'family separation' if mode_family else 'pair quality'}"]
-        filter_info.append(f"depth: {'SA' if use_sa else 'greedy'}")
         if min_stats > 0:
             filter_info.append(f"min stats: {min_stats}")
         if max_risk < 100:
@@ -1816,9 +1779,8 @@ class RoomOptimizerView(QWidget):
             filter_info.append("prefer high libido")
         if maximize_throughput and not mode_family:
             filter_info.append("maximize throughput")
-        if use_sa:
-            filter_info.append(f"temp: {sa_temperature:g}")
-            filter_info.append(f"neighbors: {sa_neighbors}")
+        filter_info.append(f"temp: {sa_temperature:g}")
+        filter_info.append(f"neighbors: {sa_neighbors}")
         if avoid_lovers:
             filter_info.append("keep lovers together")
         filter_str = f"  |  Filters: {', '.join(filter_info)}" if filter_info else ""
