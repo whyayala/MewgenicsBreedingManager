@@ -1284,7 +1284,7 @@ class BreedPriorityView(QWidget):
             "💗": "Love — 🔭 chip = love interest in scope (flat weight); 🐱 chip = love interest in same room. Both directions.",
             "💥": "Hate — 🔭 chip = rival in scope (per rival, both directions); 🐱 chip = rival in same room. Both directions.",
             "Score":   "Total weighted score — sum of all column scores.",
-            "7sub":   "7-Subset: cats in scope whose stat-7 set strictly contains this cat's (▲N = dominated by N cats). Score = (count above threshold) × weight.",
+            "7sub":   "7-Subset: cats in scope whose stat-7 set strictly contains this cat's — they have every stat-7 this cat has, plus more, so this cat adds nothing they do not already cover (▲N = dominated by N cats). Score = min(N / threshold, 1) × weight: the threshold is where the penalty reaches full strength, not where it starts counting. Use a negative weight to demote redundant cats. Cats with no stat-7 at all score 0 here rather than being penalised.",
         }
         _col_tips = {ci: _HEADER_TIPS_TEXT[hdr]
                      for ci, hdr in enumerate(_ALL_HEADERS) if hdr in _HEADER_TIPS_TEXT}
