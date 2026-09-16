@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.12.1`
+Current release: `v5.12.2`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,19 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.12.2
+
+**Fixed: Detailed Scoring ratings were being wiped on startup.**
+
+Reported as ratings disappearing after moving to a new version. The version was incidental — the real trigger was a race that any launch could hit, and upgrading just made it reliable.
+
+- `_save_ratings` wrote out only the ratings whose traits appear on the **currently loaded cats**. From the moment the view is constructed until a save finishes parsing, that roster is empty, so an early save wrote both trait sections out blank and the file was gone. Plenty of things can fire a save in that window: the 600 ms column-width timer, a splitter drag, a profile click. On a new version the What's New dialog adds exactly that kind of UI churn before the save is parsed, which is why it looked version-related.
+- The same filter was wrong even with a save open. `breed_priority.json` lives in the shared config directory and is used by **every** save, so it deleted the ratings belonging to whichever save was not currently loaded.
+- Ratings are no longer filtered. One for a trait that is not in the open save costs nothing — it simply never matches — and clearing a rating means setting it to 0, which is itself a stored value. The file's abilities/mutations split is kept accurate where the roster makes a trait classifiable and otherwise left as it was.
+- Profiles were already protected from this exact race by `_profiles_safe()`; ratings had no equivalent guard. They do now.
+
+Also corrected the **7-Sub score** tooltip, which described the formula as `(count above threshold) × weight`. It is `min(count / threshold, 1) × weight` — the threshold is where the penalty reaches full strength, not where it starts counting.
 
 ### v5.12.1
 

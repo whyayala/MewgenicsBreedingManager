@@ -815,9 +815,10 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Fixed: the Room Optimizer treated a desired disorder as something a louder room could help with. Disorders inherit on a flat 15% roll per parent, and the wiki is explicit that it is not affected by furniture or Stimulation \u2014 but with no disorder branch in the trait model they fell through to the visual-mutation curve and scored 50% rising to 66%.",
-            "The effect was that a pair wanted only for a disorder competed for the high-Stimulation rooms, crowding out the passive-carriers that actually convert Stimulation into inherited traits. Its appetite for Stimulation is now zero, so it no longer bids for a room it cannot use.",
-            "Disorders are not visual birth defects, whatever the wiki's naming suggests: OCD and Anemia are list traits like passives, while Lobster Claw and Cleft Pallet occupy a body-part slot. On a real save the two lists share not one name \u2014 only the disorder half was wrong here.",
+            "Fixed: your Detailed Scoring trait ratings could be wiped on startup. The view saved only the ratings whose traits appear on the currently loaded cats \u2014 and from launch until a save finishes parsing, that list is empty, so an early save wrote the file out blank.",
+            "Any number of things could trigger that early save: the column-width timer, a splitter drag, a profile click. Moving to a new version made it reliable because the What's New dialog adds UI churn before the save is parsed \u2014 which is why it looked like upgrading was the cause.",
+            "The same filter was wrong with a save open too: the ratings file is shared by every save, so it deleted the ratings belonging to whichever one was not loaded. Ratings are no longer filtered at all.",
+            "Also corrected the 7-Sub score tooltip. It said the score was (count above threshold) x weight; it is min(count / threshold, 1) x weight \u2014 the threshold is where the penalty maxes out, not where it begins.",
         ]
 
         root = QVBoxLayout(self)
