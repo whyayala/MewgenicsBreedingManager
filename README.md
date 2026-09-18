@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.13.0`
+Current release: `v5.13.1`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,17 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.13.1
+
+**Fixed: v5.13.0's same-sex rivalry rule almost never fired.**
+
+It scored a pair as the **product** of the two cats' orientations. The wiki gives the multiplier as `sin(π/2 × partner_sexuality)` — the *partner's* orientation, not the cat's own — and for a same-sex pair "the roles are chosen randomly", so the expected pull is the **mean** of the two values.
+
+- The case that breaks: a gay male beside a **straight** male averages **0.538**, because half the role rolls make the straight male the initiator and the multiplier becomes the gay male's ~1.00. The product scored that 0.078 and did nothing.
+- That is not an edge case, it is the normal shape of a roster. On a real save with 4 gay, 2 bi and 87 straight cats, the product flagged **3** male same-sex pairs and **1** female; the mean flags **75** and **83**. v5.13.0's rule only ever fired for two gay cats sharing a room, and missed every gay-straight pairing — which is where essentially all of the risk lives.
+- Exposure is now capped properly too: a cat can only be diverted once, so it contributes its **strongest** temptation rather than a sum over every same-sex occupant, and the More Depth room total is bounded by how many same-sex-attracted cats are actually present. Nine straight males each scoring against the room's one gay male is one possible diversion, not nine.
+- Measured on that save: pair count unchanged at 13, and More Depth trades 10.8 quality (1.8%) to cut expected diversions from **1.47 to 1.21** — at ~45 quality per pairing, about break-even, which is what the penalty weight is calibrated for.
 
 ### v5.13.0
 

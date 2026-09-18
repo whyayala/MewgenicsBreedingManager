@@ -271,6 +271,33 @@ def same_sex_attraction(cat: Cat) -> float:
     return _sexuality_mult(cat, True)
 
 
+SAME_SEX_PULL_BASELINE = 0.1
+"""Pull below which a same-sex pair is not worth separating.
+
+A straight-straight pair sits at 0.078, so this zeroes them out exactly.
+"""
+
+
+def same_sex_pair_pull(a: Cat, b: Cat) -> float:
+    """Expected same-sex multiplier for this pair, net of the straight baseline.
+
+    The wiki gives the multiplier as ``sin(pi/2 * partner_sexuality)`` — the
+    **partner's** sexuality, not the cat's own — and for a same-sex pair "the
+    roles are chosen randomly". So the game rolls whichever cat ends up the
+    partner, and the expected multiplier is the MEAN of the two cats' values,
+    not the product.
+
+    That distinction is the whole game. A gay male beside a straight male
+    averages 0.538: half the time the straight male initiates, the multiplier
+    is the gay male's ~1.0, and the two mate to no purpose. The product would
+    have called that 0.078 and dismissed it — while on a real roster, where
+    a handful of gay cats sit among dozens of straight ones, gay-straight is
+    almost every rivalry there is.
+    """
+    mean = 0.5 * (same_sex_attraction(a) + same_sex_attraction(b))
+    return max(0.0, mean - SAME_SEX_PULL_BASELINE)
+
+
 def game_compatibility(a: Cat, b: Cat, comfort: float = 0.0) -> float:
     """Estimate the game's compatibility score for a pair.
 

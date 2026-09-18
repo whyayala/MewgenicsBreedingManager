@@ -278,9 +278,20 @@ such cats look inert. They are not: a gay male is exactly as compatible with
 another gay male (0.52) as with a straight female (0.52), and mating still
 consumes both cats for the night. Two of them in one breeding room can take
 each other and strand a female who had a viable partner — two males wasted
-and a pairing lost. `breeding.same_sex_attraction` (sin curve: ~0.08 straight,
-~0.71 bi, ~1.00 gay) drives `optimizer.same_sex_rivalry`, which is applied at
-room-assignment time in both passes, the same way lover exclusivity is.
+and a pairing lost. The multiplier is `sin(pi/2 * PARTNER_sexuality)` — the **partner's**
+orientation, not the cat's own — and for a same-sex pair "the roles are chosen
+randomly", so the expected pull is the **mean** of the two cats' values, not
+the product. That distinction decides everything: a gay male beside a straight
+male averages **0.538**, because half the role rolls make the straight male the
+initiator and the multiplier becomes the gay male's ~1.00. The product would
+score that 0.078 and dismiss it — and on a real roster, where a few gay cats
+sit among dozens of straight ones, gay-straight is almost every rivalry there
+is (on the fixture save: 3 pairs flagged by the product, 75 by the mean).
+
+`breeding.same_sex_pair_pull` computes it; `optimizer.same_sex_rivalry` takes
+each cat's **strongest** temptation rather than a sum, since a cat can only be
+diverted once. Applied at room-assignment time in both passes, the same way
+lover exclusivity is.
 
 ### Comfort and fight risk
 

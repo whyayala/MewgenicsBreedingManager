@@ -152,8 +152,8 @@ def _throughput_density_bonus(valid_pairs: int, total_possible: float, enabled: 
 COMFORT_FREE_CATS = 4
 """Cats a room holds before Comfort starts dropping (-1 per extra cat)."""
 
-RIVALRY_MIN_ATTRACTION = 0.5
-"""Same-sex attraction below which a cat does not contend for a partner."""
+SAME_SEX_PULL_BASELINE = 0.1
+"""Pull below which a same-sex pair is not worth separating (straight is 0.078)."""
 
 RIVALRY_PENALTY_WEIGHT = 600.0
 """Cost of one same-sex rivalry that threatens a productive pairing.
@@ -236,19 +236,39 @@ def _sa_chain(
         gay males in a breeding room can take each other and strand a female
         who had a viable partner.
         """
-        rivals = [
-            cid for cid in cat_ids
-            if _attraction.get(cid, 0.0) >= RIVALRY_MIN_ATTRACTION
-            and _gender.get(cid, "?") not in ("", "?")
-        ]
+        rivals = [cid for cid in cat_ids if _gender.get(cid, "?") not in ("", "?")]
         if len(rivals) < 2:
             return 0.0
-        total = 0.0
+        # Mean of the two orientations, not the product: the multiplier is
+        # sin(pi/2 * PARTNER_sexuality) and same-sex roles are rolled at
+        # random, so a gay cat beside a straight one averages 0.538 — the
+        # product would score that 0.078 and ignore the commonest rivalry
+        # there is. Each cat can only be diverted once, so it contributes its
+        # strongest temptation rather than a sum over the room.
+        best: dict[int, float] = {}
         for i, ca in enumerate(rivals):
             for cb in rivals[i + 1:]:
-                if _gender.get(ca) == _gender.get(cb):
-                    total += _attraction.get(ca, 0.0) * _attraction.get(cb, 0.0)
-        return total
+                if _gender.get(ca) != _gender.get(cb):
+                    continue
+                pull = 0.5 * (_attraction.get(ca, 0.0) + _attraction.get(cb, 0.0))
+                pull = max(0.0, pull - SAME_SEX_PULL_BASELINE)
+                if pull <= 0.0:
+                    continue
+                if pull > best.get(ca, 0.0):
+                    best[ca] = pull
+                if pull > best.get(cb, 0.0):
+                    best[cb] = pull
+        # Two cats are consumed per diverted mating, so halve the per-cat sum.
+        expected = sum(best.values()) / 2.0
+        # A diversion needs a cat that actually wants one. Nine straight males
+        # each scoring against the single gay male in the room is one possible
+        # diversion, not nine, so bound it by how many same-sex-attracted cats
+        # are present.
+        attracted = sum(
+            1 for cid in rivals
+            if _attraction.get(cid, 0.0) >= 0.5
+        )
+        return min(expected, float(attracted))
 
     _pinned = fixed_ids | immovable_ids
     mutable_ids = [cid for cid in initial_state if cid not in _pinned]

@@ -11,6 +11,7 @@ from breeding import (
     PairFactors,
     desired_trait_stim_need,
     same_sex_attraction,
+    same_sex_pair_pull,
     is_hater_conflict,
     is_mutual_lover_pair,
     score_pair as score_pair_factors,
@@ -311,32 +312,26 @@ def comfort_capped_occupancy(comfort: float, comfort_target: float) -> int:
     return max(COMFORT_FREE_CATS, allowed)
 
 
-RIVALRY_MIN_ATTRACTION = 0.5
-"""Same-sex attraction below which a cat is not treated as a rival.
-
-Straight cats sit at ~0.08 and never contend for a same-sex partner; bi is
-~0.71 and gay ~1.00, both of which do.
-"""
-
-
 def same_sex_rivalry(cat: Cat, room_cats: Iterable[Cat], can_breed_fn) -> float:
     """How much productive pairing *cat* threatens to divert in this room.
 
     A same-sex pair mates and produces nothing, but the game pairs them off
-    all the same — and it costs a cat only one partner slot per night, so two
-    gay males in a room can take each other and strand a female who had a
-    viable partner. ``can_breed`` returning False for same-sex pairs keeps
-    them out of the optimizer's *selected* pairs, which made them look inert;
-    they are not, and the loss is doubled (two males wasted, one female idle).
+    all the same — and a cat only has one partner slot per night, so a
+    same-sex mating strands whoever would otherwise have had them.
+    ``can_breed`` returning False for same-sex pairs keeps them out of the
+    optimizer's *selected* pairs, which made such cats look inert; they are
+    not, and the loss is doubled (two cats wasted, one pairing lost).
 
-    Scored as the product of the two cats' same-sex attraction, counted only
-    when the room actually holds a productive pairing for one of them — two
-    gay females together forfeit nothing, since neither could conceive here
-    anyway, and separating them would be pointless churn.
+    Scored as the **strongest** same-sex temptation in the room rather than
+    the sum over every occupant: the cat can only be diverted once, so its
+    exposure is capped by its best alternative, not by how many cats are
+    present. See ``breeding.same_sex_pair_pull`` for why the pair value is
+    the mean of the two orientations and not the product.
+
+    Counted only when the room actually holds a productive pairing for one of
+    the two. Two gay females together forfeit nothing — neither could conceive
+    here anyway — and separating them would be pointless churn.
     """
-    mine = same_sex_attraction(cat)
-    if mine < RIVALRY_MIN_ATTRACTION:
-        return 0.0
     gender = (getattr(cat, "gender", "") or "").strip().lower()
     if gender in ("", "?"):
         return 0.0  # neutral cats fill either role and contend with nobody
@@ -346,19 +341,26 @@ def same_sex_rivalry(cat: Cat, room_cats: Iterable[Cat], can_breed_fn) -> float:
         other for other in others
         if other is not cat
         and (getattr(other, "gender", "") or "").strip().lower() == gender
-        and same_sex_attraction(other) >= RIVALRY_MIN_ATTRACTION
     ]
     if not rivals:
         return 0.0
 
-    def _has_mate(c: Cat) -> bool:
-        return any(o is not c and can_breed_fn(c, o) for o in others)
+    _mate_cache: dict[int, bool] = {}
 
-    total = 0.0
+    def _has_mate(c: Cat) -> bool:
+        key = id(c)
+        if key not in _mate_cache:
+            _mate_cache[key] = any(o is not c and can_breed_fn(c, o) for o in others)
+        return _mate_cache[key]
+
+    best = 0.0
     for other in rivals:
+        pull = same_sex_pair_pull(cat, other)
+        if pull <= best:
+            continue
         if _has_mate(cat) or _has_mate(other):
-            total += mine * same_sex_attraction(other)
-    return total
+            best = pull
+    return best
 
 
 def crowding_after(occupancy: int, added: int = 1) -> int:

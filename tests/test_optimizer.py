@@ -1754,6 +1754,58 @@ def test_straight_cats_are_never_treated_as_rivals():
     assert same_sex_rivalry(males[0], males, lambda a, b: True) == 0.0
 
 
+def test_pair_pull_is_the_mean_of_both_orientations_not_the_product():
+    """The multiplier is sin(pi/2 * PARTNER_sexuality) and same-sex roles are
+    rolled at random, so the expected value is the mean of the two cats'
+    orientations. Scoring it as the product understated the commonest case on
+    a real roster by a factor of seven."""
+    from breeding import same_sex_pair_pull, SAME_SEX_PULL_BASELINE
+
+    gay = _oriented(1, "male", "gay")
+    straight = _oriented(2, "male", "straight")
+    bi = _oriented(3, "male", "bi")
+
+    # gay + straight: mean 0.538, product would be 0.078.
+    assert same_sex_pair_pull(gay, straight) == pytest.approx(
+        0.538 - SAME_SEX_PULL_BASELINE, abs=0.01)
+    assert same_sex_pair_pull(gay, gay) == pytest.approx(
+        0.997 - SAME_SEX_PULL_BASELINE, abs=0.01)
+    assert same_sex_pair_pull(bi, straight) == pytest.approx(
+        0.393 - SAME_SEX_PULL_BASELINE, abs=0.01)
+    # Straight + straight sits under the baseline and scores exactly zero.
+    assert same_sex_pair_pull(straight, straight) == 0.0
+
+
+def test_a_lone_gay_male_is_split_from_the_straight_males():
+    """The case a product-based score missed completely: with one gay male
+    among straight ones, half the role rolls make the straight male the
+    initiator and the multiplier becomes the gay male's ~1.0."""
+    cats = [_oriented(1, "male", "gay"), _oriented(2, "male", "straight"),
+            _oriented(3, "female", "straight"), _oriented(4, "female", "straight")]
+    result = optimize_room_distribution(
+        cats, _two_breeding_rooms(),
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+    assert _room_for_cat(result, 1) != _room_for_cat(result, 2)
+
+
+def test_rivalry_is_capped_at_one_diversion_per_cat():
+    """A cat can only be diverted once, so its exposure is its strongest
+    temptation — not a sum that grows with every same-sex cat in the room."""
+    from room_optimizer.optimizer import same_sex_rivalry
+
+    gay = _oriented(1, "male", "gay")
+    room_small = [gay, _oriented(2, "male", "gay"), _oriented(9, "female", "straight")]
+    room_big = room_small + [_oriented(i, "male", "gay") for i in (3, 4, 5, 6)]
+
+    pull_small = same_sex_rivalry(gay, room_small, lambda a, b: True)
+    pull_big = same_sex_rivalry(gay, room_big, lambda a, b: True)
+    assert pull_small > 0
+    assert pull_big == pytest.approx(pull_small), "rivalry grew with room size"
+    assert pull_big <= 1.0
+
+
 def test_two_gay_females_together_cost_nothing():
     """Neither could conceive with the other or with a male, so there is no
     productive pairing to divert — separating them would be pointless churn."""

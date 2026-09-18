@@ -815,11 +815,10 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Same-sex-attracted cats are no longer treated as inert. A gay male is exactly as compatible with another gay male (0.52) as with a straight female (0.52), and mating still uses up both cats for the night \u2014 so two of them in one room can take each other and strand a female who had a viable partner.",
-            "Before this, the optimizer would put two gay males and one female in a single room, claim one pair, and leave another room completely empty. They are now split up, and the female keeps an uncontested partner. Bi males contend the same way at 0.37; straight cats never do.",
-            "Two gay females together are left alone \u2014 neither could conceive here anyway, so there is no pairing to divert. Neutral cats fill either role and contend with nobody.",
-            "More Depth scores the same rivalry penalty, capped at the pairs actually in the room, so it breaks a rivalry up when that is free but never gives up a pair it already has.",
-            "Also fixed: your Detailed Scoring trait ratings could be wiped on startup, and the 7-Sub tooltip described the wrong formula.",
+            "Fixed: the same-sex rivalry rule added in v5.13.0 almost never fired. It scored a pair as the product of the two cats' orientations, but the game uses the PARTNER's sexuality and rolls the same-sex roles at random \u2014 so the expected pull is the mean of the two, not the product.",
+            "The case that breaks is the common one: a gay male beside a straight male averages 0.538, because half the rolls make the straight male the initiator and the multiplier becomes the gay male's ~1.00. The product scored that 0.078 and did nothing.",
+            "On a real save with 4 gay, 2 bi and 87 straight cats, the old model flagged 3 same-sex male pairs; the corrected one flags 75. v5.13.0 only ever caught two gay cats sharing a room and missed every gay-straight pairing.",
+            "Exposure is capped properly as well: a cat can only be diverted once, so it counts its strongest temptation rather than a sum over the room.",
         ]
 
         root = QVBoxLayout(self)
