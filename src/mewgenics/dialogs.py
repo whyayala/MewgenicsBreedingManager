@@ -815,10 +815,11 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Fixed: your Detailed Scoring trait ratings could be wiped on startup. The view saved only the ratings whose traits appear on the currently loaded cats \u2014 and from launch until a save finishes parsing, that list is empty, so an early save wrote the file out blank.",
-            "Any number of things could trigger that early save: the column-width timer, a splitter drag, a profile click. Moving to a new version made it reliable because the What's New dialog adds UI churn before the save is parsed \u2014 which is why it looked like upgrading was the cause.",
-            "The same filter was wrong with a save open too: the ratings file is shared by every save, so it deleted the ratings belonging to whichever one was not loaded. Ratings are no longer filtered at all.",
-            "Also corrected the 7-Sub score tooltip. It said the score was (count above threshold) x weight; it is min(count / threshold, 1) x weight \u2014 the threshold is where the penalty maxes out, not where it begins.",
+            "Same-sex-attracted cats are no longer treated as inert. A gay male is exactly as compatible with another gay male (0.52) as with a straight female (0.52), and mating still uses up both cats for the night \u2014 so two of them in one room can take each other and strand a female who had a viable partner.",
+            "Before this, the optimizer would put two gay males and one female in a single room, claim one pair, and leave another room completely empty. They are now split up, and the female keeps an uncontested partner. Bi males contend the same way at 0.37; straight cats never do.",
+            "Two gay females together are left alone \u2014 neither could conceive here anyway, so there is no pairing to divert. Neutral cats fill either role and contend with nobody.",
+            "More Depth scores the same rivalry penalty, capped at the pairs actually in the room, so it breaks a rivalry up when that is free but never gives up a pair it already has.",
+            "Also fixed: your Detailed Scoring trait ratings could be wiped on startup, and the 7-Sub tooltip described the wrong formula.",
         ]
 
         root = QVBoxLayout(self)

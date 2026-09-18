@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.12.2`
+Current release: `v5.13.0`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,20 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.13.0
+
+**Same-sex-attracted cats now get kept apart, so they stop stealing each other's partners.**
+
+`can_breed` rejects a same-sex pair, so the optimizer never *selected* one — which made those cats look inert. They are not. A gay male is exactly as compatible with another gay male (**0.52**) as with a straight female (**0.52**), so in game he is genuinely indifferent between the productive pairing and the sterile one. Mating still consumes both cats for the night.
+
+- The failure looked like this: two gay males and one straight female went into a single room, the optimizer claimed one pair, and **left the second room completely empty**. If the two males take each other, the female is stranded — two cats wasted and a pairing lost, with an empty room sitting right there.
+- Cats are now ranked for same-sex rivalry at room-assignment time, the same way lover exclusivity already was. In that scenario the two males are split across the rooms and the female keeps an uncontested partner.
+- Bi males contend too, at 0.37 — exactly their compatibility with a bi female. Straight cats sit at ~0.08 and are never treated as rivals, so an ordinary roster is not scattered.
+- Two gay females together cost nothing and are left alone: neither could conceive here anyway, so there is no pairing to divert. Neutral cats fill either role and contend with nobody.
+- **More Depth scores its own rivalry penalty**, capped at the pairs actually present so it will break a rivalry up when it is free to but never surrender a pair it definitely has.
+
+Also documented in `CLAUDE.md`: the mother-gated asymmetry behind all of this. A gay male breeds normally because his own multiplier is never consulted; a gay female scores 0.04 with any male, below the game's 0.05 floor, and can only conceive with a neutral.
 
 ### v5.12.2
 

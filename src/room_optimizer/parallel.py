@@ -152,6 +152,17 @@ def _throughput_density_bonus(valid_pairs: int, total_possible: float, enabled: 
 COMFORT_FREE_CATS = 4
 """Cats a room holds before Comfort starts dropping (-1 per extra cat)."""
 
+RIVALRY_MIN_ATTRACTION = 0.5
+"""Same-sex attraction below which a cat does not contend for a partner."""
+
+RIVALRY_PENALTY_WEIGHT = 600.0
+"""Cost of one same-sex rivalry that threatens a productive pairing.
+
+Under a full pair (1000) on purpose: a diverted pairing is a risk, not a
+certainty, so SA should break a rivalry up when it is free to but never give
+up a pair it definitely has in order to do it.
+"""
+
 CROWDING_PENALTY_WEIGHT = 0.25
 """Score cost per point of Comfort a state gives up to crowding.
 
@@ -176,6 +187,8 @@ def _sa_chain(
     room_max_cats: dict[str, int | None],
     room_stim: dict[str, float],
     room_modes: dict[str, str],
+    cat_same_sex_attraction: dict[int, float] | None = None,
+    cat_gender: dict[int, str] | None = None,
     fixed_ids: frozenset[int],
     immovable_ids: frozenset[int] = frozenset(),
     hater_key_map: dict[int, frozenset[int]],
@@ -212,6 +225,31 @@ def _sa_chain(
     # room capacity. immovable_ids were placed deliberately (kittens in the
     # quietest room, parked unpaired cats): they must not move, but they do
     # occupy real space, so they still count.
+    _attraction = cat_same_sex_attraction or {}
+    _gender = cat_gender or {}
+
+    def _room_rivalry(cat_ids: list[int]) -> float:
+        """Same-sex pairs here that could divert a productive pairing.
+
+        Mirrors optimizer.same_sex_rivalry: a same-sex pair mates without
+        producing a kitten but still consumes both cats for the night, so two
+        gay males in a breeding room can take each other and strand a female
+        who had a viable partner.
+        """
+        rivals = [
+            cid for cid in cat_ids
+            if _attraction.get(cid, 0.0) >= RIVALRY_MIN_ATTRACTION
+            and _gender.get(cid, "?") not in ("", "?")
+        ]
+        if len(rivals) < 2:
+            return 0.0
+        total = 0.0
+        for i, ca in enumerate(rivals):
+            for cb in rivals[i + 1:]:
+                if _gender.get(ca) == _gender.get(cb):
+                    total += _attraction.get(ca, 0.0) * _attraction.get(cb, 0.0)
+        return total
+
     _pinned = fixed_ids | immovable_ids
     mutable_ids = [cid for cid in initial_state if cid not in _pinned]
     if len(mutable_ids) < 2:
@@ -323,6 +361,13 @@ def _sa_chain(
             if crowding:
                 total_quality -= crowding * CROWDING_PENALTY_WEIGHT
 
+            # Only a pairing that exists can be diverted, so cap the rivalry
+            # cost at the number of pairs actually in this room.
+            if valid_pairs:
+                rivalry = min(_room_rivalry(cats_in), float(valid_pairs))
+                if rivalry:
+                    total_quality -= rivalry * RIVALRY_PENALTY_WEIGHT
+
         moved = sum(1 for cid, r in state.items() if r != original_state.get(cid) and r)
         total_quality -= moved * move_penalty_weight
         return total_quality
@@ -433,6 +478,8 @@ def run_parallel_sa(
     room_max_cats: dict[str, int | None],
     room_stim: dict[str, float],
     room_modes: dict[str, str],
+    cat_same_sex_attraction: dict[int, float] | None = None,
+    cat_gender: dict[int, str] | None = None,
     fixed_ids: frozenset[int],
     immovable_ids: frozenset[int] = frozenset(),
     hater_key_map: dict[int, frozenset[int]],
@@ -469,6 +516,8 @@ def run_parallel_sa(
         room_max_cats=room_max_cats,
         room_stim=room_stim,
         room_modes=room_modes,
+        cat_same_sex_attraction=cat_same_sex_attraction,
+        cat_gender=cat_gender,
         fixed_ids=fixed_ids,
         immovable_ids=immovable_ids,
         hater_key_map=hater_key_map,
