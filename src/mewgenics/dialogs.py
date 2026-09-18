@@ -815,9 +815,11 @@ class WhatsNewDialog(QDialog):
         )
 
         default_highlights = highlights or [
-            "Fixed: the Room Optimizer treated a desired disorder as something a louder room could help with. Disorders inherit on a flat 15% roll per parent, and the wiki is explicit that it is not affected by furniture or Stimulation \u2014 but with no disorder branch in the trait model they fell through to the visual-mutation curve and scored 50% rising to 66%.",
-            "The effect was that a pair wanted only for a disorder competed for the high-Stimulation rooms, crowding out the passive-carriers that actually convert Stimulation into inherited traits. Its appetite for Stimulation is now zero, so it no longer bids for a room it cannot use.",
-            "Disorders are not visual birth defects, whatever the wiki's naming suggests: OCD and Anemia are list traits like passives, while Lobster Claw and Cleft Pallet occupy a body-part slot. On a real save the two lists share not one name \u2014 only the disorder half was wrong here.",
+            "Same-sex-attracted cats are no longer treated as inert. A gay male is exactly as compatible with another gay male (0.52) as with a straight female (0.52), and mating still uses up both cats for the night \u2014 so two of them in one room can take each other and strand a female who had a viable partner.",
+            "Before this, the optimizer would put two gay males and one female in a single room, claim one pair, and leave another room completely empty. They are now split up, and the female keeps an uncontested partner. Bi males contend the same way at 0.37; straight cats never do.",
+            "Two gay females together are left alone \u2014 neither could conceive here anyway, so there is no pairing to divert. Neutral cats fill either role and contend with nobody.",
+            "More Depth scores the same rivalry penalty, capped at the pairs actually in the room, so it breaks a rivalry up when that is free but never gives up a pair it already has.",
+            "Also fixed: your Detailed Scoring trait ratings could be wiped on startup, and the 7-Sub tooltip described the wrong formula.",
         ]
 
         root = QVBoxLayout(self)

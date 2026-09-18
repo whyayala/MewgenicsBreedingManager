@@ -1678,3 +1678,114 @@ def test_disorder_and_defect_names_never_overlap():
     cat = _make_cat(1, gender="male", disorders=["OCD"])
     cat.defects = ["Lobster Claw"]
     assert not (set(cat.disorders) & set(cat.defects))
+
+
+_SEXUALITY_RAW = {"straight": 0.05, "bi": 0.5, "gay": 0.95}
+
+
+def _oriented(db_key, gender, sexuality, **kw):
+    cat = _make_cat(db_key, gender=gender, sexuality=sexuality, stat_seed=6,
+                    age=5, **kw)
+    cat.sexuality_raw = _SEXUALITY_RAW[sexuality]
+    cat.libido = 0.7
+    return cat
+
+
+def _two_breeding_rooms():
+    return [
+        RoomConfig("RoomA", RoomType.BEST_PAIRS, 6, 30.0, comfort=24.0),
+        RoomConfig("RoomB", RoomType.BEST_PAIRS, 6, 30.0, comfort=24.0),
+        RoomConfig("Attic", RoomType.FALLBACK, None, 20.0, comfort=24.0),
+    ]
+
+
+def test_same_sex_attraction_matches_the_orientation_curve():
+    from breeding import same_sex_attraction
+
+    assert same_sex_attraction(_oriented(1, "male", "straight")) < 0.1
+    assert same_sex_attraction(_oriented(2, "male", "bi")) == pytest.approx(0.707, abs=0.01)
+    assert same_sex_attraction(_oriented(3, "male", "gay")) == pytest.approx(1.0, abs=0.01)
+
+
+def test_gay_males_are_split_so_they_cannot_divert_each_other():
+    """A gay male is exactly as compatible with another gay male (0.52) as
+    with a straight female (0.52), and a same-sex mating still consumes both
+    cats for the night. Leaving the spare male in the same room risks the two
+    taking each other and stranding the female — doubly wasteful, and here
+    there is an empty room to use instead."""
+    gay_a = _oriented(1, "male", "gay")
+    gay_b = _oriented(2, "male", "gay")
+    female = _oriented(3, "female", "straight")
+
+    result = optimize_room_distribution(
+        [gay_a, gay_b, female], _two_breeding_rooms(),
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+    assert _room_for_cat(result, 1) != _room_for_cat(result, 2), (
+        "both gay males were left in one room, where they can divert each other"
+    )
+    # The female keeps an uncontested partner.
+    paired_room = _room_for_cat(result, 3)
+    assert paired_room in ("RoomA", "RoomB")
+
+
+def test_bi_males_are_split_too():
+    """Bi males contend at 0.37 — the same as their compatibility with a bi
+    female — so they divert each other for the same reason."""
+    result = optimize_room_distribution(
+        [_oriented(1, "male", "bi"), _oriented(2, "male", "bi"),
+         _oriented(3, "female", "straight")],
+        _two_breeding_rooms(),
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=False),
+        cache=None, excluded_keys=set(),
+    )
+    assert _room_for_cat(result, 1) != _room_for_cat(result, 2)
+
+
+def test_straight_cats_are_never_treated_as_rivals():
+    """Straight cats sit at ~0.08 same-sex attraction and never contend, so
+    the rule must not start scattering an ordinary roster."""
+    from breeding import same_sex_attraction
+    from room_optimizer.optimizer import same_sex_rivalry
+
+    males = [_oriented(i, "male", "straight") for i in (1, 2, 3)]
+    assert same_sex_attraction(males[0]) < 0.5
+    assert same_sex_rivalry(males[0], males, lambda a, b: True) == 0.0
+
+
+def test_two_gay_females_together_cost_nothing():
+    """Neither could conceive with the other or with a male, so there is no
+    productive pairing to divert — separating them would be pointless churn."""
+    from room_optimizer.optimizer import same_sex_rivalry
+
+    a = _oriented(1, "female", "gay")
+    b = _oriented(2, "female", "gay")
+    # No cat in the room can breed with either of them.
+    assert same_sex_rivalry(a, [a, b], lambda x, y: False) == 0.0
+    # With a viable mate present, the rivalry is real.
+    assert same_sex_rivalry(a, [a, b], lambda x, y: True) > 0.0
+
+
+def test_neutral_cats_contend_with_nobody():
+    """A neutral cat fills either role and breeds with everything, so it is
+    never a same-sex rival."""
+    from room_optimizer.optimizer import same_sex_rivalry
+
+    neutral = _make_cat(1, gender="?", sexuality="straight", stat_seed=6, age=5)
+    other = _oriented(2, "male", "gay")
+    assert same_sex_rivalry(neutral, [neutral, other], lambda a, b: True) == 0.0
+
+
+def test_more_depth_keeps_gay_males_apart():
+    """The SA pass scores its own rivalry penalty, so it must not undo the
+    split the first pass made."""
+    result = optimize_room_distribution(
+        [_oriented(1, "male", "gay"), _oriented(2, "male", "gay"),
+         _oriented(3, "female", "straight"), _oriented(4, "female", "straight")],
+        _two_breeding_rooms(),
+        OptimizationParams(max_risk=100.0, avoid_lovers=False, use_sa=True,
+                           sa_chains=1),
+        cache=None, excluded_keys=set(),
+    )
+    assert _room_for_cat(result, 1) != _room_for_cat(result, 2)

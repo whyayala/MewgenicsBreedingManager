@@ -10,6 +10,7 @@ from typing import Iterable
 from breeding import (
     PairFactors,
     desired_trait_stim_need,
+    same_sex_attraction,
     is_hater_conflict,
     is_mutual_lover_pair,
     score_pair as score_pair_factors,
@@ -308,6 +309,56 @@ def comfort_capped_occupancy(comfort: float, comfort_target: float) -> int:
     """
     allowed = int(math.floor(float(comfort) - float(comfort_target))) + COMFORT_FREE_CATS
     return max(COMFORT_FREE_CATS, allowed)
+
+
+RIVALRY_MIN_ATTRACTION = 0.5
+"""Same-sex attraction below which a cat is not treated as a rival.
+
+Straight cats sit at ~0.08 and never contend for a same-sex partner; bi is
+~0.71 and gay ~1.00, both of which do.
+"""
+
+
+def same_sex_rivalry(cat: Cat, room_cats: Iterable[Cat], can_breed_fn) -> float:
+    """How much productive pairing *cat* threatens to divert in this room.
+
+    A same-sex pair mates and produces nothing, but the game pairs them off
+    all the same — and it costs a cat only one partner slot per night, so two
+    gay males in a room can take each other and strand a female who had a
+    viable partner. ``can_breed`` returning False for same-sex pairs keeps
+    them out of the optimizer's *selected* pairs, which made them look inert;
+    they are not, and the loss is doubled (two males wasted, one female idle).
+
+    Scored as the product of the two cats' same-sex attraction, counted only
+    when the room actually holds a productive pairing for one of them — two
+    gay females together forfeit nothing, since neither could conceive here
+    anyway, and separating them would be pointless churn.
+    """
+    mine = same_sex_attraction(cat)
+    if mine < RIVALRY_MIN_ATTRACTION:
+        return 0.0
+    gender = (getattr(cat, "gender", "") or "").strip().lower()
+    if gender in ("", "?"):
+        return 0.0  # neutral cats fill either role and contend with nobody
+
+    others = list(room_cats)
+    rivals = [
+        other for other in others
+        if other is not cat
+        and (getattr(other, "gender", "") or "").strip().lower() == gender
+        and same_sex_attraction(other) >= RIVALRY_MIN_ATTRACTION
+    ]
+    if not rivals:
+        return 0.0
+
+    def _has_mate(c: Cat) -> bool:
+        return any(o is not c and can_breed_fn(c, o) for o in others)
+
+    total = 0.0
+    for other in rivals:
+        if _has_mate(cat) or _has_mate(other):
+            total += mine * same_sex_attraction(other)
+    return total
 
 
 def crowding_after(occupancy: int, added: int = 1) -> int:
@@ -801,6 +852,13 @@ def _run_sa_refinement(
         room_max_cats={r.key: r.max_cats for r in room_configs},
         room_stim={r.key: r.base_stim for r in room_configs},
         room_modes={r.key: _sa_mode_key(r.mode_key, r.base_stim) for r in room_configs},
+        cat_same_sex_attraction={
+            c.db_key: same_sex_attraction(c) for c in filtered_cats
+        },
+        cat_gender={
+            c.db_key: (getattr(c, "gender", "") or "?").strip().lower()
+            for c in filtered_cats
+        },
         fixed_ids=sa_ey_fixed,
         immovable_ids=sa_immovable,
         hater_key_map=sa_haters,
@@ -1025,6 +1083,23 @@ def optimize_room_distribution(
         if selected_pairs is None:
             return None
         return sum(pair.quality for pair in selected_pairs), len(selected_pairs)
+
+    def _rivalry_for(room: RoomConfig, cat: Cat, cats_in_room: list[Cat]) -> float:
+        """Same-sex rivalry *cat* would introduce into this room."""
+        if not room.room_type.uses_profile:
+            # Fallback rooms select no pairs, so there is nothing to divert.
+            return 0.0
+        stim = room.base_stim if room.base_stim is not None else params.stimulation
+
+        def _can_breed(x: Cat, y: Cat) -> bool:
+            return _score_pair_cached(x, y, room, stim).compatible
+
+        return same_sex_rivalry(cat, cats_in_room, _can_breed)
+
+    def _pair_rivalry_for(room: RoomConfig, a: Cat, b: Cat, cats_in_room: list[Cat]) -> float:
+        occupants = list(cats_in_room)
+        return (_rivalry_for(room, a, occupants + [b])
+                + _rivalry_for(room, b, occupants + [a]))
 
     def _trait_loss_penalty_for(room: RoomConfig, cats_in_room: list[Cat]) -> float:
         if not params.avoid_trait_loss:
@@ -1297,9 +1372,15 @@ def optimize_room_distribution(
                 # passives — their trait bonus scales with the room's
                 # Stimulation, while an active-carrier's is already maxed out
                 # at 32 and a mutation-carrier's barely moves.
+                # Crowding, then same-sex rivalry, then the room this
+                # pair actually does best in. Rivalry outranks quality
+                # because a diverted pairing produces no kitten at all,
+                # which costs more than a slightly worse room.
                 iter_rooms.sort(
                     key=lambda r: (
                         crowding_after(room_effective_counts.get(r.key, 0), 2),
+                        _pair_rivalry_for(r, a, b, room_assignments[r.key])
+                        if r.room_type.uses_profile else 0.0,
                         -_score_pair_cached(a, b, r, r.base_stim).quality
                         if r.room_type.uses_profile else 0.0,
                     )
@@ -1423,7 +1504,11 @@ def optimize_room_distribution(
             ):
                 preferred = healing_rooms
             placed_quiet = False
-            for room in (*preferred, *balanced_room_order(quiet_rooms, room_effective_counts)):
+            _quiet_order = sorted(
+                balanced_room_order(quiet_rooms, room_effective_counts),
+                key=lambda r: _rivalry_for(r, cat, room_assignments[r.key]),
+            )
+            for room in (*preferred, *_quiet_order):
                 if _can_fit_single(room, room_effective_counts[room.key], cat):
                     room_assignments[room.key].append(cat)
                     room_effective_counts[room.key] += 1

@@ -258,6 +258,19 @@ def _sexuality_mult(cat: Cat, same_sex: bool) -> float:
     return math.sin(half_pi * coeff) if same_sex else math.cos(half_pi * coeff)
 
 
+def same_sex_attraction(cat: Cat) -> float:
+    """How strongly *cat* is drawn to a same-sex partner, in [0, 1].
+
+    ``sin(pi/2 * coeff)``: ~0.08 straight, ~0.71 bi, ~1.00 gay. A same-sex
+    pair produces no kitten, but the game still pairs them off — and a gay
+    male is exactly as compatible with another gay male as with a straight
+    female, so he is genuinely indifferent between the two. That makes a
+    same-sex-attracted cat a *rival* for the productive pairings in its room,
+    not an inert passenger, which is what the room optimizer uses this for.
+    """
+    return _sexuality_mult(cat, True)
+
+
 def game_compatibility(a: Cat, b: Cat, comfort: float = 0.0) -> float:
     """Estimate the game's compatibility score for a pair.
 

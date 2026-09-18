@@ -466,7 +466,31 @@ class BreedPriorityView(QWidget):
             pass
         return {}
 
-    def _save_ratings(self):
+    def _ratings_sections(self) -> tuple[dict, dict]:
+        """Ratings to persist, split into the file's abilities/mutations halves.
+
+        Ratings are deliberately NOT filtered against the currently-loaded
+        cats. They used to be, and that silently deleted every rating whenever
+        ``_save_ratings`` ran while ``self._cats`` was empty — which is the
+        state the view is in from ``__init__`` until a save finishes parsing.
+        Any UI event in that window was enough to trigger it: the 600 ms
+        column-width timer, a splitter drag, a profile click. Upgrading hit it
+        reliably because the What's New dialog adds UI churn before the save
+        is loaded, which is why ratings appeared to vanish "on a new version".
+        (``_profiles_safe`` already guards profiles against the same race.)
+
+        Filtering was wrong even with cats loaded: this file lives in
+        APPDATA_CONFIG_DIR and is shared by every save, so it would drop the
+        ratings belonging to whichever save was not currently open. A rating
+        for a trait that is not in the current save costs nothing — it simply
+        never matches — and the user clears one by setting it to 0, which is
+        itself a persisted value.
+
+        The split is cosmetic: ``_load_ratings`` reads both sections into one
+        flat dict. We keep it accurate where the current roster makes a trait
+        classifiable, and otherwise leave the rating in whichever section it
+        already occupied on disk.
+        """
         ability_set = {
             ability_base(a)
             for c in self._cats
@@ -474,9 +498,36 @@ class BreedPriorityView(QWidget):
             if not is_basic_trait(a)
         }
         mutation_set = {m for c in self._cats for m in list(c.mutations) + list(getattr(c, 'defects', []))}
+
+        abilities: dict = {}
+        mutations: dict = {}
+        try:
+            if os.path.exists(self._ratings_path):
+                with open(self._ratings_path, "r", encoding="utf-8") as _f:
+                    _on_disk = json.load(_f)
+                abilities = dict(_on_disk.get("abilities", {}) or {})
+                mutations = dict(_on_disk.get("mutations", {}) or {})
+        except Exception:
+            pass
+
+        for key, val in self._ma_ratings.items():
+            if key in mutation_set:
+                mutations[key] = val
+                abilities.pop(key, None)
+            elif key in ability_set:
+                abilities[key] = val
+                mutations.pop(key, None)
+            elif key in mutations:
+                mutations[key] = val
+            else:
+                abilities[key] = val
+        return abilities, mutations
+
+    def _save_ratings(self):
+        _abilities, _mutations = self._ratings_sections()
         data = {
-            "abilities": {k: v for k, v in self._ma_ratings.items() if k in ability_set},
-            "mutations": {k: v for k, v in self._ma_ratings.items() if k in mutation_set},
+            "abilities": _abilities,
+            "mutations": _mutations,
             "scope": self._saved_scope,
             "weights": self._weights,
             "hide_kittens": self._hide_kittens,
@@ -1284,7 +1335,7 @@ class BreedPriorityView(QWidget):
             "💗": "Love — 🔭 chip = love interest in scope (flat weight); 🐱 chip = love interest in same room. Both directions.",
             "💥": "Hate — 🔭 chip = rival in scope (per rival, both directions); 🐱 chip = rival in same room. Both directions.",
             "Score":   "Total weighted score — sum of all column scores.",
-            "7sub":   "7-Subset: cats in scope whose stat-7 set strictly contains this cat's (▲N = dominated by N cats). Score = (count above threshold) × weight.",
+            "7sub":   "7-Subset: cats in scope whose stat-7 set strictly contains this cat's — they have every stat-7 this cat has, plus more, so this cat adds nothing they do not already cover (▲N = dominated by N cats). Score = min(N / threshold, 1) × weight: the threshold is where the penalty reaches full strength, not where it starts counting. Use a negative weight to demote redundant cats. Cats with no stat-7 at all score 0 here rather than being penalised.",
         }
         _col_tips = {ci: _HEADER_TIPS_TEXT[hdr]
                      for ci, hdr in enumerate(_ALL_HEADERS) if hdr in _HEADER_TIPS_TEXT}

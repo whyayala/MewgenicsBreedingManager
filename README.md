@@ -4,7 +4,7 @@
 
 A Python desktop tool for managing your Mewgenics cats. Reads your save file directly, scores every cat for breeding priority, optimizes room layouts, and helps plan multi-generation lines — all while tracking lineage, inbreeding risk, and trait inheritance.
 
-Current release: `v5.12.1`
+Current release: `v5.13.0`
 
 If you'd like to support the original author, you can [here](https://ko-fi.com/frankieg33).
 
@@ -104,6 +104,33 @@ Produces a standalone executable via PyInstaller.
 - Original idea and reference from frankieg33
 
 ## Release Notes
+
+### v5.13.0
+
+**Same-sex-attracted cats now get kept apart, so they stop stealing each other's partners.**
+
+`can_breed` rejects a same-sex pair, so the optimizer never *selected* one — which made those cats look inert. They are not. A gay male is exactly as compatible with another gay male (**0.52**) as with a straight female (**0.52**), so in game he is genuinely indifferent between the productive pairing and the sterile one. Mating still consumes both cats for the night.
+
+- The failure looked like this: two gay males and one straight female went into a single room, the optimizer claimed one pair, and **left the second room completely empty**. If the two males take each other, the female is stranded — two cats wasted and a pairing lost, with an empty room sitting right there.
+- Cats are now ranked for same-sex rivalry at room-assignment time, the same way lover exclusivity already was. In that scenario the two males are split across the rooms and the female keeps an uncontested partner.
+- Bi males contend too, at 0.37 — exactly their compatibility with a bi female. Straight cats sit at ~0.08 and are never treated as rivals, so an ordinary roster is not scattered.
+- Two gay females together cost nothing and are left alone: neither could conceive here anyway, so there is no pairing to divert. Neutral cats fill either role and contend with nobody.
+- **More Depth scores its own rivalry penalty**, capped at the pairs actually present so it will break a rivalry up when it is free to but never surrender a pair it definitely has.
+
+Also documented in `CLAUDE.md`: the mother-gated asymmetry behind all of this. A gay male breeds normally because his own multiplier is never consulted; a gay female scores 0.04 with any male, below the game's 0.05 floor, and can only conceive with a neutral.
+
+### v5.12.2
+
+**Fixed: Detailed Scoring ratings were being wiped on startup.**
+
+Reported as ratings disappearing after moving to a new version. The version was incidental — the real trigger was a race that any launch could hit, and upgrading just made it reliable.
+
+- `_save_ratings` wrote out only the ratings whose traits appear on the **currently loaded cats**. From the moment the view is constructed until a save finishes parsing, that roster is empty, so an early save wrote both trait sections out blank and the file was gone. Plenty of things can fire a save in that window: the 600 ms column-width timer, a splitter drag, a profile click. On a new version the What's New dialog adds exactly that kind of UI churn before the save is parsed, which is why it looked version-related.
+- The same filter was wrong even with a save open. `breed_priority.json` lives in the shared config directory and is used by **every** save, so it deleted the ratings belonging to whichever save was not currently loaded.
+- Ratings are no longer filtered. One for a trait that is not in the open save costs nothing — it simply never matches — and clearing a rating means setting it to 0, which is itself a stored value. The file's abilities/mutations split is kept accurate where the roster makes a trait classifiable and otherwise left as it was.
+- Profiles were already protected from this exact race by `_profiles_safe()`; ratings had no equivalent guard. They do now.
+
+Also corrected the **7-Sub score** tooltip, which described the formula as `(count above threshold) × weight`. It is `min(count / threshold, 1) × weight` — the threshold is where the penalty reaches full strength, not where it starts counting.
 
 ### v5.12.1
 

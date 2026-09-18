@@ -265,6 +265,23 @@ the contested case from `Cat.visual_mutation_entries[*]["slot_key"]`.
 cat's compatibility multiplier is 1 on both sides, which is a gay cat's only
 productive pairing. See `save_parser.can_breed` and `breeding.game_compatibility`.
 
+**An opposite-sex attempt is gated by the MOTHER's sexuality**, so the two
+orientations are not symmetric: a gay male fathers kittens with a straight
+female at full compatibility (his own multiplier is never consulted), while a
+gay female cannot conceive with any male — 0.04, below the game's 0.05 floor.
+Her only productive partner is a neutral cat. This is why `gay_pref` and
+`gay_female_pref` are separate weights in Detailed Scoring.
+
+**Same-sex-attracted cats are rivals, not passengers.** `can_breed` rejects a
+same-sex pair, which kept it out of the optimizer's *selected* pairs and made
+such cats look inert. They are not: a gay male is exactly as compatible with
+another gay male (0.52) as with a straight female (0.52), and mating still
+consumes both cats for the night. Two of them in one breeding room can take
+each other and strand a female who had a viable partner — two males wasted
+and a pairing lost. `breeding.same_sex_attraction` (sin curve: ~0.08 straight,
+~0.71 bi, ~1.00 gay) drives `optimizer.same_sex_rivalry`, which is applied at
+room-assignment time in both passes, the same way lover exclusivity is.
+
 ### Comfort and fight risk
 
 Comfort **drops 1 for each cat in a room above 4** — the first four are free.
